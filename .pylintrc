@@ -1,0 +1,32 @@
+[MAIN]
+
+init-hook='import sys; sys.path.append(".")'
+
+
+[MESSAGES CONTROL]
+
+disable=
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    line-too-long,
+    logging-fstring-interpolation,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-instance-attributes,
+    raise-missing-from,
+    broad-exception-caught,
+    unnecessary-pass,
+    no-else-return
+
+[FORMAT]
+
+max-line-length=88
+
+
+[TYPECHECK]
+
+
+[REPORTS]
+
+reports=no
