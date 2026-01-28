@@ -14,7 +14,7 @@ def setup_logging() -> None:
     """Configures global logging settings for the application."""
     log_level_name = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    log_file = os.getenv("LOG_FILE", "logs/bot.log")
+    log_file = os.getenv("LOG_FILE", "logs/relict_bot_db.log")
     log_dir = os.path.dirname(log_file)
 
     if log_dir and not os.path.exists(log_dir):

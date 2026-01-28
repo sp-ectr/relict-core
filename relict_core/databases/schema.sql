@@ -2,10 +2,8 @@
 CREATE TABLE IF NOT EXISTS bot_configs (
     id                  SERIAL PRIMARY KEY,
     chat_id             BIGINT NOT NULL UNIQUE,
-    bot_name            TEXT NOT NULL,
     admin_id            BIGINT NOT NULL,
     timezone            TEXT NOT NULL,
-    personality_prompt  TEXT,
     created_at          TIMESTAMPTZ DEFAULT (now() at time zone 'utc'),
     updated_at          TIMESTAMPTZ DEFAULT (now() at time zone 'utc')
 );
@@ -16,7 +14,7 @@ CREATE TABLE IF NOT EXISTS participants (
     user_id                 BIGINT NOT NULL,
     custom_name             TEXT NOT NULL,
     gender                  TEXT NOT NULL,
-    relationship_score      INTEGER NOT NULL DEFAULT 50
+    relationship_score      INTEGER NOT NULL
         CHECK (relationship_score >= 0 AND relationship_score <= 100),
     is_ignored              BOOLEAN NOT NULL DEFAULT false,
     last_interaction_at     TIMESTAMPTZ,
@@ -32,11 +30,9 @@ CREATE TABLE IF NOT EXISTS long_term_memory (
     created_at          TIMESTAMPTZ DEFAULT (now() at time zone 'utc')
 );
 
-
 -- =================================================================
 -- ИНДЕКСЫ И ТРИГГЕРЫ
 -- =================================================================
-
 
 CREATE INDEX IF NOT EXISTS idx_bot_configs_chat_id ON bot_configs(chat_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_participant ON participants(config_id, user_id);
