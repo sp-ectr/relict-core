@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS bot_configs (
     chat_id             BIGINT NOT NULL UNIQUE,
     admin_id            BIGINT NOT NULL,
     timezone            TEXT NOT NULL,
+    llm_client_name     TEXT NOT NULL DEFAULT 'gemini',
     created_at          TIMESTAMPTZ DEFAULT (now() at time zone 'utc'),
     updated_at          TIMESTAMPTZ DEFAULT (now() at time zone 'utc')
 );

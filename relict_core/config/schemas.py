@@ -1,4 +1,9 @@
 from pydantic import BaseModel
+from relict_core.config.llm_interface import BaseLLMClient
+
+
+class ClientsLLM(BaseModel):
+    models: list[BaseLLMClient]
 
 
 class PersonalityManifest(BaseModel):
@@ -12,4 +17,3 @@ class Participant(BaseModel):
     gender: str
     relationship_score: int
     memories: list[str] | None = None
-

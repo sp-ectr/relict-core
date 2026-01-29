@@ -1,5 +1,6 @@
 import logging
 
+from relict_core.config.schemas import ClientsLLM
 from relict_core.databases.redis_client import RedisClient
 from relict_core.drivers.stream_driver import StreamDriver
 from relict_core.config.logging_config import log_error
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 class LLMWorker:
     def __init__(
             self,
+            clients: ClientsLLM,
             redis: RedisClient,
             worker_name: str,
             consume_stream: str,

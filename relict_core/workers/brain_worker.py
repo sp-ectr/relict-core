@@ -11,7 +11,7 @@ from relict_core.databases.postgre_client import AsyncPostgresManager
 from relict_core.drivers.stream_driver import StreamDriver
 from relict_core.config.logging_config import log_error
 from relict_core.config.events import Message, CommandDayStart, CommandDayEnd, CommandClean, Pulse, \
-    LLMRequestPulse, LLMRequestStart
+    LLMRequestPulse, LLMRequestStart, LLMRequestEnd
 from relict_core.config.schemas import PersonalityManifest, Participant
 from relict_core.config.exceptions import BrainError, StreamError
 
@@ -63,10 +63,18 @@ class BrainWorker:
                 match event:
                     case CommandDayStart(config_id=config_id):
                         await self._handle_day_start(config_id, event.trace_id)
-                    case CommandDayEnd():
+                    case CommandDayEnd(config_id=config_id):
+                        event = LLMRequestEnd.model_validate({
+                            "config_id": config_id,
+                            "trace_id": event.trace_id
+                        })
                         await self.stream.dispatch_event(event, self.produce_stream)
                     case CommandClean(config_id=config_id):
                         await self._handle_clean(config_id, event.trace_id)
+                        event = LLMRequestEnd.model_validate({
+                            "config_id": config_id,
+                            "trace_id": event.trace_id
+                        })
                         await self.stream.dispatch_event(event, self.produce_stream)
                     case Pulse(config_id=config_id, is_first_of_day=is_first_of_day, is_last_of_day=is_last_of_day,
                                label=label):

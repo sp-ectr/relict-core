@@ -103,6 +103,10 @@ class LLMRequestStart(BaseEvent):
     participants_info: dict[int, Participant] = {}  # ключ user_id
 
 
+class LLMRequestEnd(BaseEvent):
+    config_id: int
+
+
 class LLMRequestPulse(BaseEvent):
     config_id: int
     is_first_of_day: bool

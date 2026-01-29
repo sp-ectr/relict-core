@@ -2,41 +2,33 @@
 Queries for interacting with PostgreSQL databases.
 """
 UPSERT_BOT_CONFIG = """
-INSERT INTO bot_configs (chat_id, bot_name, admin_id, timezone, personality_prompt)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO bot_configs (chat_id, admin_id, timezone, llm_client_name)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (chat_id) DO UPDATE SET
-    bot_name = EXCLUDED.bot_name,
     admin_id = EXCLUDED.admin_id,
     timezone = EXCLUDED.timezone,
-    personality_prompt = EXCLUDED.personality_prompt
+    llm_client_name = EXCLUDED.llm_client_name
 RETURNING id;
 """
 
 GET_BOT_CONFIG = """
-SELECT id, chat_id, bot_name, admin_id, timezone, personality_prompt
+SELECT id, chat_id, admin_id, timezone, llm_client_name
 FROM bot_configs
 WHERE chat_id = $1;
 """
 
 GET_BOT_CONFIG_BY_ID = """
-SELECT id, chat_id, bot_name, admin_id, timezone, personality_prompt
+SELECT id, chat_id, admin_id, timezone, llm_client_name
 FROM bot_configs
 WHERE id = $1;
-"""
-
-GET_TIMEZONE_BY_CONFIG_ID = """
-SELECT timezone
-FROM bot_configs
-WHERE id = $1;
-"""
-
-GET_ALL_BOT_CONFIGS = """
-SELECT id, chat_id, bot_name, admin_id, timezone, personality_prompt 
-FROM bot_configs;
 """
 
 DELETE_BOT_CONFIG = """
 DELETE FROM bot_configs WHERE chat_id = $1;
+"""
+
+DELETE_BOT_CONFIG_BY_ID = """
+DELETE FROM bot_configs WHERE id = $1;
 """
 
 INSERT_PARTICIPANT = """
@@ -108,7 +100,5 @@ DELETE FROM long_term_memory
 WHERE id IN (SELECT id FROM ranked WHERE rn > 10);
 """
 
-DELETE_BOT_CONFIG_BY_ID = """
-DELETE FROM bot_configs WHERE id = $1;
-"""
+
 

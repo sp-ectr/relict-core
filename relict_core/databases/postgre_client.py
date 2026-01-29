@@ -153,15 +153,14 @@ class AsyncPostgresManager:
     async def upsert_bot_config(
             self,
             chat_id: int,
-            bot_name: str,
             admin_id: int,
             timezone: str,
-            personality_prompt: str = None,
+            llm_client_name: str = None,
     ) -> int:
         """Creates or updates bot configuration for a specific chat."""
         config_id = await self._execute(
             queries.UPSERT_BOT_CONFIG,
-            params=(chat_id, bot_name, admin_id, timezone, personality_prompt),
+            params=(chat_id, admin_id, timezone, llm_client_name),
             mode="fetch_val",
         )
         logger.info(f"Configuration for chat {chat_id} saved/updated successfully.")
@@ -193,17 +192,7 @@ class AsyncPostgresManager:
             logger.debug(f"No active configuration found for chat {config_id}.")
             return None
 
-    async def get_timezone_by_config_id(self, config_id: int) -> str:
-        """Return timezone for the given config ID."""
-        logger.debug(f"Fetching timezone for chat {config_id}...")
-        timezone = await self._execute(queries.GET_TIMEZONE_BY_CONFIG_ID, params=(config_id,), mode="fetch_val")
-        return timezone
-
-    async def get_all_bot_configs(self) -> list[dict[str, Any]]:
-        """Retrieves all configs (id, timezone, etc.) for all active mom chats."""
-        return await self._execute(queries.GET_ALL_BOT_CONFIGS, mode="fetch_all")
-
-    async def delete_mama_config(self, chat_id: int) -> int:
+    async def delete_bot_config(self, chat_id: int) -> int:
         """Deletes chat configuration and returns number of deleted rows."""
         logger.debug(f"Deleting configuration for chat {chat_id}...")
         deleted_count = await self._execute(
@@ -217,7 +206,25 @@ class AsyncPostgresManager:
             )
         return deleted_count
 
-    async def add_participant(
+    async def delete_bot_config_by_id(self, config_id: int) -> int:
+        """
+        Deletes all bot configurations and cascades to participants and long-term memory.
+        Returns the number of bot_configs deleted.
+        """
+        logger.warning(f"Deleting ALL bot_data {config_id} from the database. This operation is irreversible!")
+        deleted_count = await self._execute(
+            queries.DELETE_BOT_CONFIG_BY_ID,
+            params=(config_id,)
+        )
+        if deleted_count > 0:
+            logger.debug("Configuration for chat {chat_id} deleted successfully.")
+        else:
+            logger.warning(
+                f"Attempted to delete non-existent configuration for config {config_id}."
+            )
+        return deleted_count
+
+    async def insert_participant(
             self,
             config_id: int,
             user_id: int,
@@ -232,7 +239,8 @@ class AsyncPostgresManager:
             mode="fetch_row",
         )
         logger.debug(
-            f"Participant {user_id} added to mom with ID {config_id}. DB ID: {participant}."
+            f"Participant {user_id} added to bot with ID {config_id}. DB ID: {participant["id"]} /"
+            f"name: {participant["custom_name"]}."
         )
         return participant
 
@@ -284,20 +292,6 @@ class AsyncPostgresManager:
             INSERT_LONG_TERM_MEMORY,
             params=(participant_id, memory_summary)
         )
-
-    async def delete_bot_config_by_id(self, config_id: int) -> int:
-        """
-        Deletes all bot configurations and cascades to participants and long-term memory.
-        Returns the number of bot_configs deleted.
-        """
-        logger.warning(f"Deleting ALL bot_data {config_id} from the database. This operation is irreversible!")
-        deleted_count = await self._execute(
-            queries.DELETE_BOT_CONFIG_BY_ID,
-            params=(config_id,)
-        )
-        logger.info(f"All data deleted. Number of bot configurations removed: {deleted_count}.")
-        return deleted_count
-
 
     @staticmethod
     def _record_to_dict(record: asyncpg.Record | None) -> dict[str, Any] | None:
