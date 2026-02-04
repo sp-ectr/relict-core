@@ -34,7 +34,7 @@ DELETE FROM bot_configs WHERE id = $1;
 INSERT_PARTICIPANT = """
 INSERT INTO participants (config_id, user_id, custom_name, gender)
 VALUES ($1, $2, $3, $4)
-RETURNING id, custom_name;
+RETURNING id;
 """
 
 UPDATE_PERSONALITY_PROMPT = (
@@ -42,7 +42,7 @@ UPDATE_PERSONALITY_PROMPT = (
 )
 
 GET_PARTICIPANT = """
-SELECT id, custom_name, gender, relationship_score, is_ignored, last_interaction_at
+SELECT id, config_id, user_id, custom_name, gender, relationship_score, is_ignored, last_interaction_at
 FROM participants
 WHERE config_id = $1 AND user_id = $2;
 """
@@ -50,6 +50,7 @@ WHERE config_id = $1 AND user_id = $2;
 GET_PARTICIPANTS_WITH_MEMORIES = """
 SELECT
     p.id,
+    p.config_id,
     p.user_id,
     p.custom_name,
     p.gender,

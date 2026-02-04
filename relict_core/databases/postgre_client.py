@@ -9,12 +9,13 @@ import asyncpg
 from asyncpg import Pool
 from asyncpg import exceptions as error_database
 from contextlib import asynccontextmanager
-from typing import Any, Literal
+from typing import Any
 
 import relict_core.config.sql_queries as queries
 from relict_core.config.exceptions import (DatabaseConnectionError,
                                            DatabaseQueryError, DuplicateUserError,
                                            PoolConnectionError)
+from relict_core.config.schemas import SQLParams, BotConfig, Participant
 from relict_core.config.sql_queries import INSERT_LONG_TERM_MEMORY
 
 logger = logging.getLogger(__name__)
@@ -98,15 +99,13 @@ class AsyncPostgresManager:
 
     async def _execute(
             self,
-            query: str,
-            params: tuple = (),
-            mode: Literal["execute", "fetch_all", "fetch_row", "fetch_val"] = "execute"
+            parameters: SQLParams
     ) -> Any | None:
         """
         Args:
-            query: SQL string with placeholders $1, $2
-            params: Tuple of SQL parameters
-            mode: SQL execution mode:
+            parameter.query: SQL string with placeholders $1, $2
+            parameter.params: Tuple of SQL parameters
+            parameter.mode: SQL execution mode:
                 'execute': Returns number of affected rows (for INSERT/UPDATE/DELETE)
                 'fetch_all': Returns all rows as a list of dictionaries
                 'fetch_row': Returns a single row as a dictionary or None if no data
@@ -121,24 +120,25 @@ class AsyncPostgresManager:
         if not self.is_connected:
             await self._create_pool()
 
-        logger.debug(f"Executing SQL ({mode}).")
+        logger.debug(f"Executing SQL ({parameters.mode}).")
         try:
             async with self._pool_acquire() as conn:
                 async with conn.transaction():
-                    match mode:
+                    match parameters.mode:
                         case "execute":
-                            status = await conn.execute(query, *params)
+                            status = await conn.execute(parameters.query, *parameters.params)
                             return int(status.rsplit(" ", 1)[-1]) if status else 0
                         case "fetch_all":
-                            records = await conn.fetch(query, *params)
+                            records = await conn.fetch(parameters.query, *parameters.params)
                             return self._records_to_list_records(records)
                         case "fetch_row":
-                            record = await conn.fetchrow(query, *params)
+                            record = await conn.fetchrow(parameters.query, *parameters.params)
                             return self._record_to_dict(record)
                         case "fetch_val":
-                            return await conn.fetchval(query, *params)
+                            return await conn.fetchval(parameters.query, *parameters.params)
+
                         case _:
-                            raise ValueError(f"Invalid SQL query mode: {mode}.")
+                            raise ValueError(f"Invalid SQL query mode: {parameters.mode}.")
         except error_database.UniqueViolationError as e:
             raise DuplicateUserError("Participant with this user_id already exists in this config.") from e
         except error_database.PostgresError as e:
@@ -152,42 +152,40 @@ class AsyncPostgresManager:
 
     async def upsert_bot_config(
             self,
-            chat_id: int,
-            admin_id: int,
-            timezone: str,
-            llm_client_name: str = None,
+            bot_config: BotConfig
     ) -> int:
         """Creates or updates bot configuration for a specific chat."""
-        config_id = await self._execute(
-            queries.UPSERT_BOT_CONFIG,
-            params=(chat_id, admin_id, timezone, llm_client_name),
-            mode="fetch_val",
+        sql_params = SQLParams(
+            query=queries.UPSERT_BOT_CONFIG,
+            params=(bot_config.chat_id, bot_config.admin_id, bot_config.timezone, bot_config.llm_client_name),
+            mode="fetch_val"
         )
-        logger.info(f"Configuration for chat {chat_id} saved/updated successfully.")
+        config_id = await self._execute(sql_params)
+        logger.info(f"Configuration for chat {bot_config.chat_id} saved/updated successfully.")
         return config_id
 
-    async def get_bot_config(self, chat_id: int) -> dict | None:
+    async def get_bot_config(self, chat_id: int) -> BotConfig | None:
         """Retrieves active bot configuration by chat_id."""
         logger.debug(f"Fetching configuration for chat {chat_id}...")
-        config_dict = await self._execute(
-            queries.GET_BOT_CONFIG, params=(chat_id,), mode="fetch_row"
+        config = await self._execute(
+            SQLParams(query=queries.GET_BOT_CONFIG, params=(chat_id,), mode="fetch_row")
         )
-        if config_dict:
+        if config:
             logger.debug(f"Configuration for chat {chat_id} found.")
-            return config_dict
+            return BotConfig.model_validate(config)
         else:
             logger.debug(f"No active configuration found for chat {chat_id}.")
             return None
 
-    async def get_bot_config_by_id(self, config_id: int) -> dict | None:
+    async def get_bot_config_by_id(self, config_id: int) -> BotConfig | None:
         """Fetches all bot information by id from the database."""
         logger.debug(f"Fetching configuration for chat {config_id}...")
-        config_dict = await self._execute(
-            queries.GET_BOT_CONFIG_BY_ID, params=(config_id,), mode="fetch_row"
+        config = await self._execute(
+            SQLParams(query=queries.GET_BOT_CONFIG_BY_ID, params=(config_id,), mode="fetch_row")
         )
-        if config_dict:
+        if config:
             logger.debug(f"Configuration for chat {config_id} found.")
-            return config_dict
+            return BotConfig.model_validate(config)
         else:
             logger.debug(f"No active configuration found for chat {config_id}.")
             return None
@@ -196,7 +194,7 @@ class AsyncPostgresManager:
         """Deletes chat configuration and returns number of deleted rows."""
         logger.debug(f"Deleting configuration for chat {chat_id}...")
         deleted_count = await self._execute(
-            queries.DELETE_BOT_CONFIG, params=(chat_id,)
+            SQLParams(query=queries.DELETE_BOT_CONFIG, params=(chat_id,))
         )
         if deleted_count > 0:
             logger.debug("Configuration for chat {chat_id} deleted successfully.")
@@ -213,8 +211,7 @@ class AsyncPostgresManager:
         """
         logger.warning(f"Deleting ALL bot_data {config_id} from the database. This operation is irreversible!")
         deleted_count = await self._execute(
-            queries.DELETE_BOT_CONFIG_BY_ID,
-            params=(config_id,)
+            SQLParams(query=queries.DELETE_BOT_CONFIG_BY_ID, params=(config_id,))
         )
         if deleted_count > 0:
             logger.debug("Configuration for chat {chat_id} deleted successfully.")
@@ -226,71 +223,60 @@ class AsyncPostgresManager:
 
     async def insert_participant(
             self,
-            config_id: int,
-            user_id: int,
-            custom_name: str,
-            gender: str,
-            relationship_score: int
-    ) -> dict[str, Any]:
+            participant: Participant
+    ) -> int:
         """Adds a user to bot memory and returns a dict with unique ID and custom_name."""
-        participant = await self._execute(
-            queries.INSERT_PARTICIPANT,
-            params=(config_id, user_id, custom_name, gender, relationship_score),
-            mode="fetch_row",
+        participant_id = await self._execute(
+            SQLParams(
+                query=queries.INSERT_PARTICIPANT,
+                params=(participant.config_id, participant.user_id, participant.custom_name, participant.gender,),
+                mode="fetch_val"
+            )
         )
         logger.debug(
-            f"Participant {user_id} added to bot with ID {config_id}. DB ID: {participant["id"]} /"
-            f"name: {participant["custom_name"]}."
+            f"Participant {participant.user_id} added to bot with ID {participant.config_id}. DB ID: {participant_id}."
         )
-        return participant
+        return participant_id
 
-    async def get_participant(self, config_id: int, user_id: int) -> dict | str:
+    async def get_participant(self, config_id: int, user_id: int) -> Participant | str:
         """Retrieves full information about a participant by Telegram ID."""
-        participant = await self._execute(
-            queries.GET_PARTICIPANT, params=(config_id, user_id), mode="fetch_row"
+        participant_record = await self._execute(
+            SQLParams(query=queries.GET_PARTICIPANT, params=(config_id, user_id), mode="fetch_row")
         )
-        if participant:
-            return participant
+        if participant_record:
+            return Participant.model_validate(participant_record)
         else:
             return "<UnknownUser>"
 
-    async def get_all_participants_with_memories(self, config_id: int) -> list[dict]:
+    async def get_all_participants_with_memories(self, config_id: int) -> list[Participant] | []:
         """Retrieves all active participants for a config, embedding their
         latest memories directly into each participant's record."""
-        return await self._execute(
-            queries.GET_PARTICIPANTS_WITH_MEMORIES,
-            params=(config_id,),
-            mode="fetch_all",
+        participant_list = await self._execute(
+            SQLParams(query=queries.GET_PARTICIPANTS_WITH_MEMORIES, params=(config_id,), mode="fetch_all")
         )
+        participants = []
+        if participant_list:
+            for participant in participant_list:
+                participants.append(Participant.model_validate(participant))
+        return participants
 
-    async def update_personality_prompt(self, prompt: str, config_id: int):
-        await self._execute(
-            queries.UPDATE_PERSONALITY_PROMPT,
-            params=(prompt, config_id)
-        )
-
-    async def set_ignore_status(self, participant_id: int, status: bool) -> None:
-        """Sets the is_ignored flag for a participant and resets relationship_score to 0."""
-        await self._execute(
-            queries.SET_IGNORED_STATUS, params=(status, participant_id)
-        )
-
-    async def update_relationship_score(
-            self, participant_id: int, score_change: int
-    ) -> None:
+    async def update_relationship_score(self, participant: Participant, score_change: int) -> None:
         """Updates participant reputation only."""
         await self._execute(
-            queries.UPDATE_RELATIONSHIP_SCORE,
-            params=(score_change, participant_id)
+            SQLParams(query=queries.UPDATE_RELATIONSHIP_SCORE, params=(score_change, participant.id))
+        )
+
+    async def set_ignore_status(self, participant: Participant, status: bool) -> None:
+        """Sets the is_ignored flag for a participant and resets relationship_score to 0."""
+        await self._execute(
+            SQLParams(query=queries.SET_IGNORED_STATUS, params=(status, participant.id))
         )
 
     async def add_long_term_memory(
-            self, participant_id: int, memory_summary: str
+            self, participant: Participant, memory_summary: str
     ) -> None:
         """Records a participant's memory and keeps only the latest 10 entries."""
-        await self._execute(
-            INSERT_LONG_TERM_MEMORY,
-            params=(participant_id, memory_summary)
+        await self._execute(SQLParams(query=INSERT_LONG_TERM_MEMORY, params=(participant.id, memory_summary))
         )
 
     @staticmethod
