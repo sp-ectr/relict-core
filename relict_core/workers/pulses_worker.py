@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from apscheduler import AsyncScheduler, ConflictPolicy
 from apscheduler.triggers.date import DateTrigger
 
-from relict_core.databases.postgre_client import AsyncPostgresManager
+from relict_core.databases.postgre_client import AsyncPostgreManager
 from relict_core.databases.redis_client import RedisClient
 from relict_core.config.events import (CommandDayStart,
                                 CommandDayEnd,
@@ -35,7 +35,7 @@ class PulsesWorker:
             self,
             scheduler: AsyncScheduler,
             redis: RedisClient,
-            data_base: AsyncPostgresManager,
+            data_base: AsyncPostgreManager,
             pulse_planner: type[PulsePlanner],
             opts: SchedulerSettings,
             worker_name: str,

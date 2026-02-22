@@ -1,7 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
-from relict_core.config.llm_interface import BaseLLMClient
-from typing import Any, Literal
+from typing import Literal
 
 
 class SQLParams(BaseModel):
@@ -65,25 +64,26 @@ class Participant(BaseModel):
     memories: list[str] | None = None
 
 
-class NewUser(BaseModel):
-    """
-    Minimal representation of a new participant as provided by the LLM.
-
-    Attributes:
-        user_id: Unique identifier of the participant from an external source (e.g., Telegram).
-        custom_name: Name provided by the participant or remembered/assigned by the bot.
-        gender: Participant's gender.
-    """
-    user_id: int
-    custom_name: str
-    gender: str
+class RedisKey(BaseModel):
+    key: str = Field(..., pattern=r"^(bot_config:\d+|silence_lock:\d+|silence_counter:\d+)$")
 
 
-class ClientsLLM(BaseModel):
-    models: list[BaseLLMClient]
+class StreamContext(BaseModel):
+    stream: str = Field(..., pattern=r"^(raw_messages|messages_stream:\d+)$")
+    group: Literal["operators"]
+    consumer: str = Field(default="consumer", pattern=r"^(operator_\d+")
 
 
-class PersonalityManifest(BaseModel):
-    bot_name: str
-    persona_description: str
-    core_goal: str
+class WorkerIdentety(BaseModel):
+    worker_name: Literal["operator"]
+    index: int
+
+    @property
+    def consumer_name(self) -> str:
+        return f"{self.worker_name}_{self.index}"
+
+
+class RawStreamData(BaseModel):
+    data_id: str = None
+    payload: dict = None
+    error: bool = False

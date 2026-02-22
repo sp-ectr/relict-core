@@ -1,38 +1,64 @@
-from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class _BaseSettings(BaseSettings):
+    """
+    Base class for loading environment variables from a `.env` file.
+
+    This class configures common settings for all application
+    configuration objects, including:
+    - path to the `.env` file
+    - case-insensitive environment variables
+    - ignoring extra variables
+    """
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).parent.parent.parent / ".env",
+        env_file=".env",
+        env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
     )
 
 
-class PostgresSetting(_BaseSettings):
+class PostgreSettings(_BaseSettings):
+    """
+    Configuration object for AsyncPostgreManager.
+
+    Attributes:
+        db_user: PostgreSQL username.
+        db_password: Password for the PostgreSQL user.
+        db_host: Database host.
+        db_port: Database port.
+        db_name: Database name.
+        pool_size_min: Minimum size of the connection pool.
+        pool_size_max: Maximum size of the connection pool.
+
+    Properties:
+        database_url: Fully constructed DSN string for async PostgreSQL connection.
+    """
     db_user: str
     db_password: str
     db_host: str
     db_port: int
     db_name: str
+    pool_size_min: int = 1
+    pool_size_max: int = 10
 
     @property
     def database_url(self) -> str:
-        return f"postgresql+asyncpg://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        return (
+            f"postgresql+asyncpg://{self.db_user}:"
+            f"{self.db_password}@{self.db_host}:"
+            f"{self.db_port}/{self.db_name}"
+        )
 
 
 class RedisSettings(_BaseSettings):
+    """
+    Configuration object for Redis client.
+
+    Attributes:
+        redis_host: Redis server host.
+        redis_port: Redis server port.
+    """
     redis_host: str
     redis_port: int
-
-
-class SchedulerSettings(_BaseSettings):
-    DAY_START_HOUR: int
-    DAY_END_HOUR: int
-    MIN_SESSIONS_PER_DAY: int
-    MAX_SESSIONS_PER_DAY: int
-    MIN_SESSION_DURATION_MIN: int
-    MAX_SESSION_DURATION_MIN: int
-    MIN_PULSE_INTERVAL_SEC: int
-    MAX_PULSE_INTERVAL_SEC: int

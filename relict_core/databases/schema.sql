@@ -17,24 +17,14 @@ CREATE TABLE IF NOT EXISTS participants (
     gender                  TEXT NOT NULL,
     relationship_score      INTEGER NOT NULL
         CHECK (relationship_score >= 0 AND relationship_score <= 100),
+    memories                TEXT[] DEFAULT '{}',
     is_ignored              BOOLEAN NOT NULL DEFAULT false,
     last_interaction_at     TIMESTAMPTZ,
     created_at              TIMESTAMPTZ DEFAULT (now() at time zone 'utc'),
     updated_at              TIMESTAMPTZ DEFAULT (now() at time zone 'utc')
 );
 
--- Таблица 3: Долгосрочная память (Архив)
-CREATE TABLE IF NOT EXISTS long_term_memory (
-    id                  SERIAL PRIMARY KEY,
-    participant_id      INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-    memory_summary      TEXT NOT NULL,
-    created_at          TIMESTAMPTZ DEFAULT (now() at time zone 'utc')
-);
-
--- =================================================================
 -- ИНДЕКСЫ И ТРИГГЕРЫ
--- =================================================================
-
 CREATE INDEX IF NOT EXISTS idx_bot_configs_chat_id ON bot_configs(chat_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_participant ON participants(config_id, user_id);
 

@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from apscheduler import AsyncScheduler, ConflictPolicy
 from apscheduler.triggers.cron import CronTrigger
 
-from relict_core.databases.postgre_client import AsyncPostgresManager
+from relict_core.databases.postgre_client import AsyncPostgreManager
 from relict_core.databases.redis_client import RedisClient
 from relict_core.drivers.stream_driver import StreamDriver
 from relict_core.config.events import (EventStart,
@@ -30,7 +30,7 @@ class SessionWorker:
             self,
             scheduler: AsyncScheduler,
             redis: RedisClient,
-            data_base: AsyncPostgresManager,
+            data_base: AsyncPostgreManager,
             opts: SchedulerSettings,
             worker_name: str,
             consume_stream: str,

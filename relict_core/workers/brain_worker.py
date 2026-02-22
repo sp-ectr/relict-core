@@ -7,7 +7,7 @@ It listens to the pulse_stream and produces the brain_stream.
 import logging
 
 from relict_core.databases.redis_client import RedisClient
-from relict_core.databases.postgre_client import AsyncPostgresManager
+from relict_core.databases.postgre_client import AsyncPostgreManager
 from relict_core.drivers.stream_driver import StreamDriver
 from relict_core.config.logging_config import log_error
 from relict_core.config.events import Message, CommandDayStart, CommandDayEnd, CommandClean, Pulse, \
@@ -22,7 +22,7 @@ class BrainWorker:
     def __init__(
             self,
             redis: RedisClient,
-            data_base: AsyncPostgresManager,
+            data_base: AsyncPostgreManager,
             personality: PersonalityManifest,
             worker_name: str,
             consume_stream: str,
@@ -184,7 +184,7 @@ class BrainWorker:
                 redis=self.redis,
                 consume_stream=f"messages_stream:{config_id}",
                 group_name="brain_messages_workers",
-                consumer_name=f"{self.worker_name}_pulse_{trace_id}"
+                consumer_name=f"{self.worker_name}_reader"
             )
 
             messages: dict[int, str] = {}

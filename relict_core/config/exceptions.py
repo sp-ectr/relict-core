@@ -38,6 +38,11 @@ class RedisConnectionError(CustomError):
 
     pass
 
+class RedisError(CustomError):
+    """Unexpected Redis error."""
+
+    pass
+
 
 class StreamError(CustomError):
     """Error from some stream in memory db."""

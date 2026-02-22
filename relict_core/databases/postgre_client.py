@@ -15,20 +15,29 @@ import relict_core.config.sql_queries as queries
 from relict_core.config.exceptions import (DatabaseConnectionError,
                                            DatabaseQueryError, DuplicateUserError,
                                            PoolConnectionError)
+from relict_core.config.relict_settings import PostgreSettings
 from relict_core.config.schemas import SQLParams, BotConfig, Participant
-from relict_core.config.sql_queries import INSERT_LONG_TERM_MEMORY
+
 
 logger = logging.getLogger(__name__)
 
 
-class AsyncPostgresManager:
+class AsyncPostgreManager:
     """
-    Async PostgreSQL manager that creates and manages its own connection pool.
-    Provides methods for query execution and safe resource handling.
+    Asynchronous PostgreSQL manager.
+
+    Handles connection pool lifecycle and async query execution.
+    Used as the primary storage layer for application data.
+
+    Parameters
+    ----------
+    opts : PostgresSetting
+        Pydantic settings object containing PostgreSQL configuration.
     """
 
-    def __init__(self, dsn: str):
-        self._dsn = dsn
+    def __init__(self, opts: PostgreSettings):
+        self.opts = opts
+        self._dsn = self.opts.database_url
         self._pool: Pool | None = None
         self._is_connected: bool = False
 
@@ -48,8 +57,8 @@ class AsyncPostgresManager:
                 self._pool = None
                 self._pool = await asyncpg.create_pool(
                     dsn=self._dsn,
-                    min_size=1,
-                    max_size=10,
+                    min_size=self.opts.pool_size_min,
+                    max_size=self.opts.pool_size_max,
                     command_timeout=3
                 )
                 async with self._pool.acquire() as conn:
@@ -136,7 +145,6 @@ class AsyncPostgresManager:
                             return self._record_to_dict(record)
                         case "fetch_val":
                             return await conn.fetchval(parameters.query, *parameters.params)
-
                         case _:
                             raise ValueError(f"Invalid SQL query mode: {parameters.mode}.")
         except error_database.UniqueViolationError as e:
@@ -276,8 +284,8 @@ class AsyncPostgresManager:
             self, participant: Participant, memory_summary: str
     ) -> None:
         """Records a participant's memory and keeps only the latest 10 entries."""
-        await self._execute(SQLParams(query=INSERT_LONG_TERM_MEMORY, params=(participant.id, memory_summary))
-        )
+        await self._execute(SQLParams(query=queries.INSERT_LONG_TERM_MEMORY, params=(participant.id, memory_summary))
+                            )
 
     @staticmethod
     def _record_to_dict(record: asyncpg.Record | None) -> dict[str, Any] | None:

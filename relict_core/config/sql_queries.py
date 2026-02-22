@@ -32,8 +32,8 @@ DELETE FROM bot_configs WHERE id = $1;
 """
 
 INSERT_PARTICIPANT = """
-INSERT INTO participants (config_id, user_id, custom_name, gender)
-VALUES ($1, $2, $3, $4)
+INSERT INTO participants (config_id, user_id, custom_name, gender, relationship_score, memories)
+VALUES ($1, $2, $3, $4, $5, '{}')
 RETURNING id;
 """
 

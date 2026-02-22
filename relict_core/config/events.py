@@ -6,7 +6,6 @@ Each class represents a unique, strictly-typed event that components
 """
 import uuid
 from pydantic import BaseModel, Field, computed_field
-from relict_core.config.schemas import PersonalityManifest, Participant
 
 
 class BaseEvent(BaseModel):
@@ -29,6 +28,12 @@ class BaseEvent(BaseModel):
 
 
 # --- Raw Input Events
+class RawMessage(BaseEvent):
+    chat_id: int
+    user_id: int
+    user_name: str
+    text: str
+
 
 class Message(BaseEvent):
     """
@@ -37,10 +42,11 @@ class Message(BaseEvent):
     """
     user_id: int
     user_name: str
-    text: str | None
+    text: str
 
 
 # --- System Lifecycle Events
+
 
 class EventStart(BaseEvent):
     """
@@ -96,29 +102,28 @@ class Pulse(BaseEvent):
     is_last_of_day: bool
     label: str
 
-
-class LLMRequestStart(BaseEvent):
-    config_id: int
-    system_prompt: PersonalityManifest
-    participants_info: dict[int, Participant] = {}  # ключ user_id
-
-
-class LLMRequestEnd(BaseEvent):
-    config_id: int
-
-
-class LLMRequestPulse(BaseEvent):
-    config_id: int
-    is_first_of_day: bool
-    is_last_of_day: bool
-    label: str
-    messages: dict[int, str] = {}
-
-
-class LLMResponse(BaseEvent):
-    config_id: int
-    text_reply: str | None
-    new_memories: dict[int, str] | None  # ключ user_id
-    respect_updates: dict[int, int]  # ключ user_id
-    new_participants: dict[int, Participant]  # ключ user_id
-    set_block: list[int] | None  # ignor
+# class LLMRequestStart(BaseEvent):
+#     config_id: int
+#     system_prompt: str
+#     participants_info: dict[int, Participant] = {}  # ключ user_id
+#
+#
+# class LLMRequestEnd(BaseEvent):
+#     config_id: int
+#
+#
+# class LLMRequestPulse(BaseEvent):
+#     config_id: int
+#     is_first_of_day: bool
+#     is_last_of_day: bool
+#     label: str
+#     messages: dict[int, str] = {}
+#
+#
+# class LLMResponse(BaseEvent):
+#     config_id: int
+#     text_reply: str | None
+#     new_memories: dict[int, str] | None  # ключ user_id
+#     respect_updates: dict[int, int]  # ключ user_id
+#     new_participants: dict[int, Participant]  # ключ user_id
+#     set_block: list[int] | None  # ignor
