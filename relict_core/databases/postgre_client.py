@@ -18,7 +18,6 @@ from relict_core.config.exceptions import (DatabaseConnectionError,
 from relict_core.config.relict_settings import PostgreSettings
 from relict_core.config.schemas import SQLParams, BotConfig, Participant
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -75,6 +74,15 @@ class AsyncPostgreManager:
                     raise PoolConnectionError(
                         f"Unexpected error during connection attempt {attempt + 1}: {e}"
                     ) from e
+
+    @asynccontextmanager
+    async def lifecycle(self):
+        """Context manager for safe connection handling."""
+        await self._create_pool()
+        try:
+            yield self
+        finally:
+            await self._disconnect()
 
     @asynccontextmanager
     async def _pool_acquire(self, timeout: float | None = 3):
@@ -237,7 +245,7 @@ class AsyncPostgreManager:
         participant_id = await self._execute(
             SQLParams(
                 query=queries.INSERT_PARTICIPANT,
-                params=(participant.config_id, participant.user_id, participant.custom_name, participant.gender,),
+                params=(participant.config_id, participant.user_id, participant.custom_name, participant.gender, participant.relationship_score),
                 mode="fetch_val"
             )
         )
@@ -246,7 +254,7 @@ class AsyncPostgreManager:
         )
         return participant_id
 
-    async def get_participant(self, config_id: int, user_id: int) -> Participant | str:
+    async def get_participant(self, config_id: int, user_id: int) -> Participant | None:
         """Retrieves full information about a participant by Telegram ID."""
         participant_record = await self._execute(
             SQLParams(query=queries.GET_PARTICIPANT, params=(config_id, user_id), mode="fetch_row")
@@ -254,19 +262,19 @@ class AsyncPostgreManager:
         if participant_record:
             return Participant.model_validate(participant_record)
         else:
-            return "<UnknownUser>"
+            return None
 
-    async def get_all_participants_with_memories(self, config_id: int) -> list[Participant] | []:
-        """Retrieves all active participants for a config, embedding their
-        latest memories directly into each participant's record."""
-        participant_list = await self._execute(
-            SQLParams(query=queries.GET_PARTICIPANTS_WITH_MEMORIES, params=(config_id,), mode="fetch_all")
-        )
-        participants = []
-        if participant_list:
-            for participant in participant_list:
-                participants.append(Participant.model_validate(participant))
-        return participants
+    # async def get_all_participants_with_memories(self, config_id: int) -> list[Participant] | []:
+    #     """Retrieves all active participants for a config, embedding their
+    #     latest memories directly into each participant's record."""
+    #     participant_list = await self._execute(
+    #         SQLParams(query=queries.GET_PARTICIPANTS_WITH_MEMORIES, params=(config_id,), mode="fetch_all")
+    #     )
+    #     participants = []
+    #     if participant_list:
+    #         for participant in participant_list:
+    #             participants.append(Participant.model_validate(participant))
+    #     return participants
 
     async def update_relationship_score(self, participant: Participant, score_change: int) -> None:
         """Updates participant reputation only."""
@@ -274,10 +282,10 @@ class AsyncPostgreManager:
             SQLParams(query=queries.UPDATE_RELATIONSHIP_SCORE, params=(score_change, participant.id))
         )
 
-    async def set_ignore_status(self, participant: Participant, status: bool) -> None:
+    async def set_ignore_status(self, participant_id: int, status: bool) -> None:
         """Sets the is_ignored flag for a participant and resets relationship_score to 0."""
         await self._execute(
-            SQLParams(query=queries.SET_IGNORED_STATUS, params=(status, participant.id))
+            SQLParams(query=queries.SET_IGNORED_STATUS, params=(status, participant_id))
         )
 
     async def add_long_term_memory(

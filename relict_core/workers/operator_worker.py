@@ -6,12 +6,14 @@ caching config and participant data, applying rate limits, and routing
 messages into Redis queues based on priority.
 """
 import logging
+
+from relict_core.config.exceptions import OperatorError
 from relict_core.config.logging_config import log_error
 
 from relict_core.databases.redis_client import RedisClient
 from relict_core.databases.postgre_client import AsyncPostgreManager
 from relict_core.config.relict_settings import PostgreSettings, RedisSettings
-from relict_core.config.schemas import WorkerIdentety, StreamContext, RedisKey
+from relict_core.config.schemas import WorkerIdentety, StreamContext, RedisKey, RedisData
 from relict_core.config.events import RawMessage, Message
 
 logger = logging.getLogger(__name__)
@@ -19,10 +21,10 @@ logger = logging.getLogger(__name__)
 
 class OperatorWorker:
     def __init__(
-            self,
-            postgre_opts: PostgreSettings,
-            redis_opts: RedisSettings,
-            worker_opts: WorkerIdentety
+        self,
+        postgre_opts: PostgreSettings,
+        redis_opts: RedisSettings,
+        worker_opts: WorkerIdentety
     ):
         self.postgre_opts = postgre_opts
         self.redis_opts = redis_opts
@@ -47,40 +49,109 @@ class OperatorWorker:
         )
         self.db = AsyncPostgreManager(self.postgre_opts)
         self.redis = RedisClient(self.redis_opts)
-        logger.info(f"{self.worker_opts.consumer_name} is started. Listening for {self.main_stream.stream}...")
 
-        await self.redis.stream_create_group(self.main_stream)
+        async with self.db.lifecycle(), self.redis.lifecycle():
+            logger.info(f"{self.worker_opts.consumer_name} connected to PostgreSQL and Redis")
+            await self.redis.stream_create_group(self.main_stream)
+            logger.info(f"{self.worker_opts.consumer_name} is started. Listening for {self.main_stream.stream}...")
 
-        while self.is_running:
-            try:
-                result = await self.redis.stream_read_data(self.main_stream, 10, 200)
+            while self.is_running:
+                try:
+                    result = await self.redis.stream_read_data(self.main_stream, count=10, block_ms=200)
 
-                if not result:
-                    continue
-
-                for data in result:
-                    if data.error:
-                        await self.redis.stream_ack(self.main_stream, data.data_id)
+                    if not result:
                         continue
-                    raw_event = data.payload.get("event_type")
-                    match raw_event:
-                        case "RawMessage":
-                            event = RawMessage.model_validate(data.payload)
-                            await self._handle_event(event)
-                            await self.redis.stream_ack(self.main_stream, data.message_id)
 
-    async def _handle_event(self, event):
-        key = RedisKey(key=f"bot_config:{event.chat_id}")
+                    for data in result:
+                        if data.error:
+                            await self.redis.stream_ack(self.main_stream, data.data_id)
+                            continue
+
+                        raw_event_type = data.payload.get("event_type")
+                        match raw_event_type:
+                            case "RawMessage":
+                                event = RawMessage.model_validate(data.payload)
+                                await self._handle_event(event)
+                                await self.redis.stream_ack(self.main_stream, data.data_id)
+                            case _:
+                                logger.warning(f"Unexpected event type: {raw_event_type}")
+                                await self.redis.stream_ack(self.main_stream, data.data_id)
+
+                except Exception as e:
+                    logger.exception("Critical error in OperatorWorker main loop")
+                    raise OperatorError(f"Critical error in OperatorWorker loop: {e}") from e
+
+        logger.info(f"{self.worker_opts.consumer_name} gracefully stopped")
+
+    async def stop(self):
+        """Gracefully stop the worker loop."""
+        if self.is_running:
+            logger.info(f"Stopping {self.worker_opts.consumer_name}...")
+            self.is_running = False
+        else:
+            logger.debug(f"{self.worker_opts.consumer_name} already stopped or not started")
+
+    async def _handle_event(self, event: RawMessage):
+        """
+        Processes an incoming raw message:
+        - applies per-user rate limiting
+        - loads and caches chat configuration
+        - checks participant ignored status
+        - resets silence state on valid activity
+        """
+        config_key = RedisData.bot_config(event.chat_id)
+        rate_limit_key = RedisKey(key=f"rate_limit_user:{event.user_id}")
         silent_key = RedisKey(key=f"silence_lock:{event.chat_id}")
         silent_counter_key = RedisKey(key=f"silence_counter:{event.chat_id}")
-        if not (bot_config := await self.redis.get_data(key)):
-            if not (bot_config := await self.db.get_bot_config(event.chat_id)):
+
+        if not (bot_config := await self.redis.get_data(config_key)):
+            bot_config = await self.db.get_bot_config(event.chat_id)
+            if not bot_config:
+                logger.info(f"No bot config found for chat {event.chat_id}, dropping")
                 return
-            else:
-                await self.redis.delete_many([silent_key, silent_counter_key])
-                await self.redis.set_data(key, bot_config)
+            await self.redis.set_data(config_key, bot_config)
 
-        config_id = bot_config["id"]
+        current_count = await self.redis.increment_counter(rate_limit_key, ttl=5)
+        if current_count > 10:
+            logger.warning(
+                f"Rate limit burst exceeded | user={event.user_id} chat={bot_config.id} "
+                f"count={current_count}/10 in 5s → dropped"
+            )
+            return
 
+        participant_key = RedisData.participant_config(bot_config.id, event.user_id)
+        participant = await self.redis.get_data(participant_key)
+        if not participant:
+            participant = await self.db.get_participant(bot_config.id, event.user_id)
+            if participant:
+                await self.redis.set_data(participant_key, participant)
+
+        if participant and participant.is_ignored:
+            logger.debug(f"Ignored user {event.user_id} in chat {bot_config.id}")
+            return
+
+        await self.redis.delete_many([silent_key, silent_counter_key])
+
+        new_event = Message(
+            user_id=event.user_id,
+            user_name=event.user_name,
+            text=event.text,
+            trace_id=event.trace_id
+        )
+
+        produce_stream = StreamContext(
+            stream=f"messages_stream:{event.chat_id}",
+            group="operators",
+            consumer=self.worker_opts.consumer_name
+        )
+
+        try:
+            event_id = await self.redis.stream_add(new_event, produce_stream)
+            logger.debug(f"Produced message {event_id} to {produce_stream.stream} (trace: {event.trace_id})")
+        except Exception as e:
+            logger.error(
+                f"Failed to produce message to {produce_stream.stream} | trace={event.trace_id}: {e}",
+                exc_info=True
+            )
 
 

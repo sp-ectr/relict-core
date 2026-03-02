@@ -44,8 +44,8 @@ class RedisError(CustomError):
     pass
 
 
-class StreamError(CustomError):
-    """Error from some stream in memory db."""
+class OperatorError(CustomError):
+    """Error from some Operator worker."""
 
     pass
 
@@ -57,4 +57,8 @@ class SchedulerError(CustomError):
 class BrainError(CustomError):
     """Error during brain_service operation."""
 
+    pass
+
+class StreamError(CustomError):
+    """Ошибка при работе с стримом."""
     pass

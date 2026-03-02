@@ -14,7 +14,7 @@ from redis.exceptions import ResponseError
 from relict_core.config.events import BaseEvent
 from relict_core.config.exceptions import RedisConnectionError, StreamError, RedisError
 from relict_core.config.relict_settings import RedisSettings
-from relict_core.config.schemas import RedisKey, StreamContext, RawStreamData, BotConfig
+from relict_core.config.schemas import T, RedisKey, RedisData, StreamContext, RawStreamData, BotConfig
 
 logger = logging.getLogger(__name__)
 
@@ -70,53 +70,46 @@ class RedisClient:
             await self.disconnect()
 
     # -------------------- Key-value / JSON / Flags -------------------- #
-    async def set_data(self, key: RedisKey, payload: BotConfig | None = None, ttl: int | None = None):
-        """
-        Store a Pydantic model in Redis.
-
-        Only allows storing BotConfig objects or None.
-        """
+    async def set_key(self, key: RedisKey, ttl: int | None = None):
         ttl_to_use = self._default_ttl if ttl is None else None if ttl == 0 else ttl
 
-        if payload is None:
-            value = ""
-        elif isinstance(payload, BotConfig):
-            value = payload.model_dump_json()
-        else:
-            raise TypeError(f"Redis payload must be BotConfig or None, got {type(payload)}")
-
         try:
-            await self._client.set(key.key, value, ttl_to_use)
+            await self._client.set(key.key, "", ttl_to_use)
         except Exception as e:
             raise RedisError(f"Failed to store RedisData for key {key.key}: {e}")
-
-    async def get_data(self, key: RedisKey) -> BotConfig | None:
-        raw: str | None = await self._client.get(key.key)
-        if raw is None:
-            return None
-
-        try:
-            return BotConfig.model_validate_json(raw)
-        except Exception as e:
-            logger.critical(f"Failed to load RedisData for key {key}: {e}")
-            return None
 
     async def has_key(self, key: RedisKey) -> bool:
         return bool(await self._client.exists(key.key))
 
-    async def increment_counter(self, data: RedisData) -> int:
+    async def set_data(self, key: RedisData[T], payload: T, ttl: int | None = None):
+        ttl_to_use = self._default_ttl if ttl is None else None if ttl == 0 else ttl
+        try:
+            await self._client.set(key.key, payload.model_dump_json(), ttl_to_use)
+        except Exception as e:
+            raise RedisError(f"Failed to store data for key {key.key}: {e}")
+
+    async def get_data(self, key: RedisData[T]) -> T | None:
+        raw: str | None = await self._client.get(key.key)
+        if raw is None:
+            return None
+        try:
+            return key.model.model_validate_json(raw)
+        except Exception as e:
+            logger.critical(f"Failed to load RedisData for key {key}: {e}")
+            return None
+
+    async def increment_counter(self, key: RedisKey, ttl: int | None = None) -> int:
         """Increment a numeric counter with optional TTL. Returns new value."""
-        ttl = self.opts.default_ttl if data.ttl_seconds == "default" else data.ttl_seconds
+        ttl_to_use = self._default_ttl if ttl is None else None if ttl == 0 else ttl
         async with self._client.pipeline(transaction=True) as pipe:
-            await pipe.incr(data.key)
-            if ttl is not None and ttl > 0:
-                await pipe.expire(data.key, ttl, nx=True)
+            await pipe.incr(key.key)
+            await pipe.expire(key.key, ttl_to_use, nx=True)
             results = await pipe.execute()
         return results[0]
 
-    async def delete(self, key: str) -> None:
+    async def delete(self, key: RedisKey) -> None:
         """Delete a single key."""
-        await self._client.delete(key)
+        await self._client.delete(key.key)
 
     async def delete_many(self, keys: list[RedisKey]):
         """Delete multiple keys in a pipeline."""
@@ -131,7 +124,7 @@ class RedisClient:
         Add an event to a Redis stream and optional TTL on stream key.
         """
         try:
-            event = {"payload": data.event.model_dump_json()}
+            event = {"payload": data.model_dump_json()}
             message_id = await self._client.xadd(
                 opts.stream,
                 event,
@@ -140,19 +133,19 @@ class RedisClient:
             )
             return message_id
         except Exception as e:
-            raise StreamError("Unexpected error occurred while working with the Redis stream: {e}")
+            raise StreamError(f"Unexpected error occurred while working with the Redis stream: {e}")
 
     async def stream_create_group(self, opts: StreamContext):
         """Create consumer group for a stream (idempotent)."""
         try:
-            await self._client.xgroup_create(opts.consume_stream, opts.group_name, id="0", mkstream=True)
+            await self._client.xgroup_create(opts.stream, opts.group, id="0", mkstream=True)
             logger.debug(
-                f"Consumer group '{opts.group_name}' created for stream '{opts.consume_stream}'.")
+                f"Consumer group '{opts.group}' created for stream '{opts.stream}'.")
         except ResponseError as e:
             if "BUSYGROUP" in str(e):
-                logger.debug(f"Consumer group '{opts.group_name}' already exists.")
+                logger.debug(f"Consumer group '{opts.group}' already exists.")
             else:
-                raise RedisConnectionError(f"Failed to create group '{opts.group_name}': {e}") from e
+                raise RedisConnectionError(f"Failed to create group '{opts.group}': {e}") from e
 
     async def stream_read_data(
             self,
@@ -162,9 +155,9 @@ class RedisClient:
     ) -> list[RawStreamData]:
 
         response = await self._client.xreadgroup(
-            opts.group_name,
+            opts.group,
             opts.consumer,
-            {opts.consume_stream: ">"},
+            {opts.stream: ">"},
             count=count,
             block=block_ms
         )
@@ -176,10 +169,10 @@ class RedisClient:
         for _, messages in response:
             for data_id, data in messages:
                 try:
-                    result.append(RawStreamData(data_id=data_id, payload=json.loads(data)))
+                    result.append(RawStreamData(data_id=data_id, payload=json.loads(data["payload"])))
                 except Exception as e:
                     logger.warning(
-                        f"Malformed message {data_id} in stream '{opts.consume_stream}': {e}"
+                        f"Malformed message {data_id} in stream '{opts.stream}': {e}"
                     )
                     result.append(RawStreamData(data_id=data_id, error=True))
                     continue
@@ -194,6 +187,6 @@ class RedisClient:
     async def stream_trim(self, opts: StreamContext, max_len: int = 1000):
         """Trim stream to last `max_len` messages."""
         try:
-            await self._client.xtrim(opts.stream_name, maxlen=max_len, approximate=True)
+            await self._client.xtrim(opts.stream, maxlen=max_len, approximate=True)
         except Exception as e:
             logger.critical(f"Unexpected error occurred while trimming Redis stream: {e}")
