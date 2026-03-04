@@ -68,7 +68,7 @@ async def handler_test(redis_test):
     async def _create(count: int):
         stream_context = StreamContext(
             stream="raw_messages",
-            group="operators",
+            group="test",
         )
         test_messages = RawMessage(
             chat_id=123,

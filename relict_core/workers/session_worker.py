@@ -1,22 +1,24 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler import AsyncScheduler, ConflictPolicy
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
 from relict_core.databases.postgre_client import AsyncPostgreManager
 from relict_core.databases.redis_client import RedisClient
-from relict_core.drivers.stream_driver import StreamDriver
 from relict_core.config.events import (EventStart,
                                        EventClean,
                                        CommandDayStart,
                                        CommandDayEnd,
-                                       CommandClean
+                                       CommandPulse
                                        )
+from relict_core.config.relict_settings import PostgreSettings, RedisSettings
 from relict_core.config.logging_config import log_error
-from relict_core.config.relict_settings import SchedulerSettings
+from relict_core.config.schemas import SchedulerSettings, WorkerIdentety, StreamContext
 from relict_core.config.exceptions import SchedulerError, StreamError
+from relict_core.drivers.pulse_planner import PulsePlanner
 
 logger = logging.getLogger(__name__)
 
@@ -28,122 +30,208 @@ class SessionWorker:
 
     def __init__(
             self,
-            scheduler: AsyncScheduler,
-            redis: RedisClient,
-            data_base: AsyncPostgreManager,
-            opts: SchedulerSettings,
-            worker_name: str,
-            consume_stream: str,
-            produce_stream: str
+            postgre_opts: PostgreSettings,
+            redis_opts: RedisSettings,
+            worker_opts: WorkerIdentety,
+            scheduler_opts: SchedulerSettings
     ):
-        self.scheduler = scheduler
-        self.worker_name = worker_name
-        self.opts = opts
-        self.consume_stream = consume_stream
-        self.produce_stream = produce_stream
-        self.db = data_base
-        self.stream = StreamDriver(
-            redis=redis,
-            consume_stream=self.consume_stream,
-            group_name="scheduler_sessions_workers",
-            consumer_name=self.worker_name
-        )
+        self.postgre_opts = postgre_opts
+        self.redis_opts = redis_opts
+        self.worker_opts = worker_opts
+        self.scheduler_opts = scheduler_opts
+
+        self.db: AsyncPostgreManager | None = None
+        self.redis: RedisClient | None = None
+        self.main_stream: StreamContext | None = None
+        self.produce_stream: StreamContext | None = None
+        self.scheduler: AsyncScheduler | None = None
+
         self.is_running = False
-        logger.info(f"{self.worker_name} is initialized.")
+        logger.info(f"{self.worker_opts.consumer_name} is initialized.")
 
     @log_error
     async def run(self):
         """The main event loop for the worker."""
         self.is_running = True
-        logger.info(f"{self.worker_name} is started. Listening for {self.consume_stream}...")
+        self.main_stream = StreamContext(
+            stream="system_stream",
+            group="schedulers",
+            consumer=self.worker_opts.consumer_name
+        )
 
-        await self.stream.ensure_group()
+        self.db = AsyncPostgreManager(self.postgre_opts)
+        self.redis = RedisClient(self.redis_opts)
+        self.scheduler = AsyncScheduler()
 
-        while self.is_running:
-            try:
-                result = await self.stream.next_event()
+        async with self.scheduler, self.db.lifecycle(), self.redis.lifecycle():
+            logger.info(f"{self.worker_opts.consumer_name} connected to PostgreSQL and Redis")
+            await self.redis.stream_create_group(self.main_stream)
+            logger.info(f"{self.worker_opts.consumer_name} is started. Listening for {self.main_stream.stream}...")
+            while self.is_running:
+                try:
+                    result = await self.redis.stream_read_data(self.main_stream, block_ms=100)
 
-                if not result:
-                    continue
+                    if not result:
+                        continue
 
-                msg_id, event = result
+                    for data in result:
+                        if data.error:
+                            await self.redis.stream_ack(self.main_stream, data.data_id)
+                            raise SchedulerError(f"Error while processing a key event for the system. {data.data_id}")
 
-                match event:
-                    case EventStart(config_id=config_id):
-                        await self._handle_start(config_id, event.trace_id)
-                    case EventClean(config_id=config_id):
-                        await self._handle_clean(config_id, event.trace_id)
-                    case _:
-                        logger.warning(f"Unexpected event in system_stream: {type(event).__name__}")
+                        raw_event_type = data.payload.get("event_type")
+                        match raw_event_type:
+                            case "EventStart":
+                                event = EventStart.model_validate(data.payload)
+                                await self._handle_start(event)
+                                await self.redis.stream_ack(self.main_stream, data.data_id)
+                            case "EventClean":
+                                event = EventClean.model_validate(data.payload)
+                                await self._handle_clean(event)
+                                await self.redis.stream_ack(self.main_stream, data.data_id)
+                except StreamError as e:
+                    raise SchedulerError(f"Stream logic failed: {e}")
+                except Exception as e:
+                    raise SchedulerError(f"Critical error in SchedulerWorker loop: {e}")
 
-                await self.stream.ack(msg_id)
-
-            except StreamError as e:
-                raise SchedulerError(f"Stream logic failed: {e}")
-            except Exception as e:
-                raise SchedulerError(f"Critical error in SchedulerWorker loop: {e}")
-
-    async def _handle_start(self, config_id: int, trace_id: str):
+    async def _handle_start(self, event: EventStart):
         """
         Handler a new config: deletes any old jobs and creates new,
         perpetual DayStart/DayEnd Cron jobs.
         """
-        logger.debug(f"Handling EventStart for config_id={config_id}. Setting up daily cycle.")
+        logger.debug(f"Handling EventStart for config_id={event.config_id}. Setting up daily cycle.")
 
         try:
-            timezone = ZoneInfo(await self.db.get_timezone_by_config_id(config_id))
-            await self._remove_jobs_for_config(config_id)
+            config = await self.db.get_bot_config_by_id(event.config_id)
+            timezone = ZoneInfo(config.timezone)
+            await self._remove_jobs_for_config(event.config_id)
 
-            start_command = CommandDayStart(config_id=config_id, trace_id=trace_id)
+            start_command = CommandDayStart(config_id=event.config_id, trace_id=event.trace_id)
             await self.scheduler.add_schedule(
-                self.stream.dispatch_event,
-                trigger=CronTrigger(hour=self.opts.DAY_START_HOUR, minute=0, timezone=timezone),
+                self._handle_day_start,
+                trigger=CronTrigger(hour=self.scheduler_opts.day_start_hour, minute=0, timezone=timezone),
                 kwargs={
-                    "event": start_command,
-                    "stream_name": self.produce_stream
+                    "command": start_command,
+                    "timezone": timezone
                 },
-                id=f"day_start_{config_id}",
+                id=f"day_start_{event.config_id}",
                 conflict_policy=ConflictPolicy.replace
             )
-            end_command = CommandDayEnd(config_id=config_id, trace_id=trace_id)
+            end_command = CommandDayEnd(config_id=event.config_id, trace_id=event.trace_id)
             await self.scheduler.add_schedule(
-                self.stream.dispatch_event,
-                trigger=CronTrigger(hour=self.opts.DAY_END_HOUR, minute=0, timezone=timezone),
+                self._handle_day_end,
+                trigger=CronTrigger(hour=self.scheduler_opts.day_end_hour, minute=0, timezone=timezone),
                 kwargs={
-                    "event": end_command,
-                    "stream_name": self.produce_stream
+                    "command": end_command,
                 },
-                id=f"day_end_{config_id}",
+                id=f"day_end_{event.config_id}",
                 conflict_policy=ConflictPolicy.replace
             )
 
             now_in_tz = datetime.now(timezone)
-            if self.opts.DAY_START_HOUR <= now_in_tz.hour < self.opts.DAY_END_HOUR:
-                logger.info(f"Active hours: triggering initial DayStart for config_id={config_id}")
-                await self.stream.dispatch_event(start_command, self.produce_stream)
-            else:
-                logger.info(f"Off-hours: initial DayStart for config_id={config_id} will be triggered by cron.")
 
+            day_end_dt = now_in_tz.replace(
+                hour=self.scheduler_opts.day_end_hour,
+                minute=0, second=0, microsecond=0
+            )
+
+            time_left = day_end_dt - now_in_tz
+            min_duration = timedelta(minutes=self.scheduler_opts.min_session_duration_min)
+
+            if time_left < min_duration:
+                logger.info(f"Too late to start. Left: {time_left}, required: {min_duration}. Skipping.")
+                return
+
+            logger.info(f"Active hours: triggering initial DayStart for config_id={event.config_id}")
+            await self._handle_day_start(start_command, timezone)
 
         except ZoneInfoNotFoundError:
-            await self._remove_jobs_for_config(config_id)
+            await self._remove_jobs_for_config(event.config_id)
             raise SchedulerError(
-                f"Invalid timezone for config_id={config_id}.")
+                f"Invalid timezone for config_id={event.config_id}.")
         except Exception as e:
-            await self._remove_jobs_for_config(config_id)
-            raise SchedulerError(f"Failed to schedule jobs for config {config_id}: {e}")
+            await self._remove_jobs_for_config(event.config_id)
+            raise SchedulerError(f"Failed to schedule jobs for config {event.config_id}: {e}")
 
-    async def _handle_clean(self, config_id: int, trace_id: str):
-        """
-        Handles a clean command: deletes scheduler jobs and forwards the command.
-        """
-        logger.debug(f"Handling CommandClean for config_id={config_id} with trace_id {trace_id}. Removing all jobs.")
-        command = CommandClean(config_id=config_id, trace_id=trace_id)
+    async def _handle_day_start(self, command: CommandDayStart, timezone: ZoneInfo):
+        logger.debug(f"Handling СommandDayStart for config_id={command.config_id}. Planning pulses...")
         try:
-            await self._remove_jobs_for_config(config_id)
-            await self.stream.dispatch_event(command, self.produce_stream)
+            await self._remove_pulse_for_config(command.config_id)
+            pulse_planner = PulsePlanner(timezone, self.scheduler_opts)
+            pulses = pulse_planner.plan_pulses_for_today()
+
+            for pulse in pulses:
+                pulse_command = CommandPulse(
+                    config_id=command.config_id,
+                    is_first_of_day=pulse.is_first_of_day,
+                    is_last_of_day=pulse.is_last_of_day,
+                    label=pulse.label
+                )
+                await self.scheduler.add_schedule(
+                    self.redis.stream_add,
+                    trigger=DateTrigger(pulse.timestamp),
+                    kwargs={
+                        "data": pulse_command,
+                        "opts": StreamContext(
+                            stream="session_stream",
+                            group="schedulers",
+                            consumer=self.worker_opts.consumer_name
+                        )
+                    },
+                    id=f"pulse_{pulse.timestamp.isoformat()}_{command.config_id}",
+                    conflict_policy=ConflictPolicy.replace
+                )
+            logger.info(f"Scheduled {len(pulses)} pulses for config_id={command.config_id}.")
+            await self.redis.stream_add(
+                command,
+                StreamContext(
+                    stream="session_stream",
+                    group="schedulers",
+                    consumer=self.worker_opts.consumer_name
+                )
+            )
+        except ZoneInfoNotFoundError:
+            await self._remove_pulse_for_config(command.config_id)
+            raise SchedulerError(
+                f"Invalid timezone for config_id={command.config_id}.")
         except Exception as e:
-            raise SchedulerError(f"Failed _handle_clean for config {config_id} with event {trace_id}: {e}")
+            await self._remove_pulse_for_config(command.config_id)
+            raise SchedulerError(f"Failed to plan pulses for config_id={command.config_id}: {e}")
+
+    async def _handle_day_end(self, command: CommandDayEnd):
+        logger.debug(f"Handling Clean for config_id={command.config_id}. Removing pulse jobs.")
+        try:
+            await self._remove_pulse_for_config(command.config_id)
+            await self.redis.stream_add(
+                command,
+                StreamContext(
+                    stream="session_stream",
+                    group="schedulers",
+                    consumer=self.worker_opts.consumer_name
+                )
+            )
+        except Exception as e:
+            raise SchedulerError(f"Failed _handle_clean for config {command.config_id} with event {command.trace_id}: {e}")
+
+    async def _handle_clean(self, event: EventClean):
+        """
+        Handles a clean event: deletes scheduler jobs and forwards the command.
+        """
+        logger.debug(
+            f"Handling CommandClean for config_id={event.config_id} with trace_id {event.trace_id}. Removing all jobs.")
+        try:
+            await self._remove_jobs_for_config(event.config_id)
+            await self._remove_pulse_for_config(event.config_id)
+            await self.redis.stream_add(
+                event,
+                StreamContext(
+                    stream="session_stream",
+                    group="schedulers",
+                    consumer=self.worker_opts.consumer_name
+                )
+            )
+        except Exception as e:
+            raise SchedulerError(f"Failed _handle_clean for config {event.config_id} with event {event.trace_id}: {e}")
 
     async def _remove_jobs_for_config(self, config_id: int):
         """Safely removes all APScheduler jobs for a specific config_id."""
@@ -155,6 +243,17 @@ class SessionWorker:
                 logger.debug(f"Schedule {job_id} not found, skipping.")
             except Exception as e:
                 raise SchedulerError(f"Failed to remove schedule {job_id}: {e}")
+
+    async def _remove_pulse_for_config(self, config_id: int):
+        """Safely removes all pulse-related APScheduler jobs for a config."""
+        schedules = await self.scheduler.get_schedules()
+        for schedule in schedules:
+            if schedule.id.startswith("pulse_") and schedule.id.endswith(f"_{config_id}"):
+                try:
+                    await self.scheduler.remove_schedule(schedule.id)
+                except KeyError:
+                    pass
+        logger.debug(f"Removed all pulse schedules for config_id={config_id}.")
 
     def stop(self):
         self.is_running = False

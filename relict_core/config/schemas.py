@@ -117,18 +117,11 @@ class RedisData(BaseModel, Generic[T]):
     classmethods as factories to construct instances; this ensures
     the key format and model type are always consistent.
 
-    Allowed namespaces:
-        - bot_config:<chat_id>
-        - participant_config:<bot_id>:<user_id>
-
     Attributes:
         key: The full Redis key string. Must match the allowed pattern.
         model: The Pydantic model class associated with this key.
             Used by the Redis client to deserialize stored JSON.
 
-    Example:
-        key = RedisData.bot_config(chat_id=123)
-        result = await redis.get_data(key)  # returns BotConfig | None
     """
     key: str = Field(
         ...,
@@ -153,15 +146,16 @@ class StreamContext(BaseModel):
     Context required to interact with a Redis Stream consumer group.
 
     Attributes:
-        stream: Name of the Redis stream. Must be either 'raw_messages'
-            or 'messages_stream:<chat_id>'.
+        stream: Name of the Redis stream.
         group: Consumer group name. Restricted to known system groups.
         consumer: Consumer identifier within the group.
-            Defaults to 'consumer_0'. Must match 'operator_<index>' pattern.
     """
-    stream: str = Field(..., pattern=r"^(raw_messages|messages_stream:\d+)$")
-    group: Literal["operators"]
-    consumer: str = Field(default="consumer_0", pattern=r"^operator_\d+")
+    stream: str = Field(..., pattern=r"^(raw_messages"
+                                     r"|messages_stream:\d+"
+                                     r"|system_stream"
+                                     r"|session_stream)$")
+    group: Literal["test", "operators", "schedulers"]
+    consumer: str = Field(default="consumer_0", pattern=r"^operator_\d+|scheduler_d+$")
 
 
 class WorkerIdentety(BaseModel):
@@ -172,7 +166,7 @@ class WorkerIdentety(BaseModel):
     and to distinguish workers in logs.
 
     Attributes:
-        worker_name: Role of the worker. Currently only 'operator' is supported.
+        worker_name: Role of the worker.
         index: Numeric index of this worker instance. Used to differentiate
             multiple workers of the same type running concurrently.
 
@@ -180,7 +174,7 @@ class WorkerIdentety(BaseModel):
         consumer_name: Derived consumer identifier in the format '<worker_name>_<index>'.
             Used when registering the worker as a consumer in a Redis stream group.
     """
-    worker_name: Literal["operator"]
+    worker_name: Literal["operator", "scheduler"]
     index: int
 
     @property
@@ -209,3 +203,54 @@ class RawStreamData(BaseModel):
     data_id: str = None
     payload: dict = None
     error: bool = False
+
+
+class SchedulerSettings(BaseModel):
+    """
+    Biological clock configuration for the bot entity.
+
+    Defines the behavioral rhythm of the bot, controlling when it is active
+    and how frequently it interacts (pulses). This acts as the core personality
+    mechanic, preventing spam and simulating human-like presence.
+    All fields enforce strict boundaries to prevent system overload or API abuse.
+
+    Attributes:
+        day_start_hour: Hour (0-23) when the bot wakes up and can start sessions.
+            Defaults to 9.
+        day_end_hour: Hour (0-23) when the bot goes to sleep. Defaults to 22.
+        min_sessions_per_day: Minimum number of active communication windows per day.
+            Must be between 1 and 10. Defaults to 5.
+        max_sessions_per_day: Maximum number of active communication windows per day.
+            Must be between 2 and 15. Defaults to 7.
+        min_session_duration_min: Minimum length of a single active session in minutes.
+            Must be between 5 and 60. Defaults to 20.
+        max_session_duration_min: Maximum length of a single active session in minutes.
+            Must be between 10 and 240. Defaults to 40.
+        min_pulse_interval_sec: Minimum delay between individual actions (pulses) within a session.
+            Acts as a hard rate-limit against LLM spam. Must be between 10 and 3600 seconds. Defaults to 60.
+        max_pulse_interval_sec: Maximum delay between individual actions within a session.
+            Simulates a "thinking" or "distracted" delay. Must be between 30 and 3600 seconds. Defaults to 180.
+    """
+    day_start_hour: int = Field(default=9, ge=0, le=23)
+    day_end_hour: int = Field(default=22, ge=0, le=23)
+
+    min_sessions_per_day: int = Field(default=5, ge=1, le=10)
+    max_sessions_per_day: int = Field(default=7, ge=2, le=15)
+
+    min_session_duration_min: int = Field(default=20, ge=5, le=60)
+    max_session_duration_min: int = Field(default=40, ge=10, le=240)
+
+    min_pulse_interval_sec: int = Field(default=60, ge=10, le=3600)
+    max_pulse_interval_sec: int = Field(default=180, ge=30, le=3600)
+
+class Pulse(BaseModel):
+    """Represents a single, precise moment for the bot to act."""
+    timestamp: datetime
+    label: str
+    is_first_of_day: bool = False
+    is_last_of_day: bool = False
+
+class SessionSlot(BaseModel):
+    """Represents a macro-level window of bot activity."""
+    start: datetime
+    end: datetime

@@ -155,11 +155,10 @@ async def test_poison_pill_invalid_json(redis_test, operator_test):
     await asyncio.sleep(1)
 
     async with redis_test.lifecycle():
-        await redis_test._client.xadd("raw_messages", {"huy": "awdwa"})
+        await redis_test._client.xadd("raw_messages", {"eue": "awdwa"})
         await redis_test._client.xadd("raw_messages", {"payload": "not_a_json"})
 
-    await asyncio.sleep(2)  # даем время на обработку
-
+    await asyncio.sleep(2)  # даем время на обработ
     # проверяем, что воркер жив
     assert task.done() is False  # таска не упала
 

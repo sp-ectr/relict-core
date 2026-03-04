@@ -7,7 +7,6 @@ import json
 import logging
 from contextlib import asynccontextmanager
 
-from pydantic import BaseModel
 from redis.asyncio import ConnectionPool, Redis
 from redis.exceptions import ResponseError
 
@@ -183,10 +182,3 @@ class RedisClient:
             await self._client.xack(opts.stream, opts.group, data_id)
         except Exception as e:
             logger.critical(f"Unexpected error occurred while acknowledging Redis stream: {e}")
-
-    async def stream_trim(self, opts: StreamContext, max_len: int = 1000):
-        """Trim stream to last `max_len` messages."""
-        try:
-            await self._client.xtrim(opts.stream, maxlen=max_len, approximate=True)
-        except Exception as e:
-            logger.critical(f"Unexpected error occurred while trimming Redis stream: {e}")

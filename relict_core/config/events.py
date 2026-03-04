@@ -82,17 +82,10 @@ class CommandDayEnd(BaseEvent):
     config_id: int
 
 
-class CommandClean(BaseEvent):
-    """
-    A command forwarded from EventClean to instruct all relevant workers
-    to perform cleanup tasks for a specific configuration.
-    """
-    config_id: int
-
-
 # --- Pulse & Turn Events ---
 
-class Pulse(BaseEvent):
+
+class CommandPulse(BaseEvent):
     """
     A fine-grained trigger for the bot to "act" (think or speak).
     Represents a single beat in the bot's "heartbeat".
