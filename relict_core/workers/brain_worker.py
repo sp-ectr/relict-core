@@ -2,18 +2,19 @@
 BrainWorker
 
 The main class that centralizes incoming signals.
-It listens to the pulse_stream and produces the brain_stream.
+It listens to the session_stream and produces the brain_stream.
 """
 import logging
 
+from relict_core.config.llm_interface import BaseLLMClient
+from relict_core.config.relict_settings import PostgreSettings, RedisSettings, LLMSettings
 from relict_core.databases.redis_client import RedisClient
 from relict_core.databases.postgre_client import AsyncPostgreManager
-from relict_core.drivers.stream_driver import StreamDriver
 from relict_core.config.logging_config import log_error
-from relict_core.config.events import Message, CommandDayStart, CommandDayEnd, CommandClean, Pulse, \
-    LLMRequestPulse, LLMRequestStart, LLMRequestEnd
-from relict_core.config.schemas import PersonalityManifest, Participant
+from relict_core.config.events import Message, EventClean, CommandPulse, CommandDayEnd
+from relict_core.config.schemas import PersonalityManifest, Participant, WorkerIdentety, StreamContext, RedisKey, LLMRequest, LLMResponse
 from relict_core.config.exceptions import BrainError, StreamError
+from relict_core.drivers.gemeni_client import GeminiClient
 
 logger = logging.getLogger(__name__)
 
@@ -21,81 +22,91 @@ logger = logging.getLogger(__name__)
 class BrainWorker:
     def __init__(
             self,
-            redis: RedisClient,
-            data_base: AsyncPostgreManager,
-            personality: PersonalityManifest,
-            worker_name: str,
-            consume_stream: str,
-            produce_stream: str
+            postgre_opts: PostgreSettings,
+            redis_opts: RedisSettings,
+            worker_opts: WorkerIdentety,
+            persona: PersonalityManifest,
+            llm_opts: LLMSettings
     ):
-        self.db = data_base
-        self.worker_name = worker_name
-        self.consume_stream = consume_stream
-        self.produce_stream = produce_stream
-        self.personality = personality
-        self.redis = redis
-        self.stream = StreamDriver(
-            redis=redis,
-            consume_stream=self.consume_stream,
-            group_name="brain_workers",
-            consumer_name=self.worker_name
-        )
+        self.postgre_opts = postgre_opts
+        self.redis_opts = redis_opts
+        self.worker_opts = worker_opts
+        self.persona = persona
+        self.llm_opts = llm_opts
+
+        self.db: AsyncPostgreManager | None = None
+        self.redis: RedisClient | None = None
+        self.llm: BaseLLMClient | None = None
+        self.main_stream: StreamContext | None = None
+        self.message_stream: StreamContext | None = None
+        self.produce_stream: StreamContext | None = None
+
         self.is_running = False
-        logger.info(f"{self.worker_name} is initialized.")
+        logger.info(f"{self.worker_opts.consumer_name} is initialized.")
 
     @log_error
     async def run(self):
         """The main event loop for the worker."""
         self.is_running = True
-        logger.info(f"{self.worker_name}. Listening for {self.consume_stream}...")
+        self.main_stream = StreamContext(
+            stream=f"session_stream:shard_{self.worker_opts.index}",
+            group="brain_workers",
+            consumer=self.worker_opts.consumer_name
+        )
 
-        await self.stream.ensure_group()
+        self.db = AsyncPostgreManager(self.postgre_opts)
+        self.redis = RedisClient(self.redis_opts)
+        self.llm = GeminiClient(self.llm_opts)
 
-        while self.is_running:
-            try:
-                result = await self.stream.next_event()
+        async with self.db.lifecycle(), self.redis.lifecycle():
+            logger.info(f"{self.worker_opts.consumer_name} connected to PostgreSQL and Redis")
+            await self.redis.stream_create_group(self.main_stream)
+            logger.info(f"{self.worker_opts.consumer_name} is started. Listening for {self.main_stream.stream}...")
+            while self.is_running:
+                try:
+                    result = await self.redis.stream_read_data(self.main_stream, block_ms=100)
 
-                if not result:
-                    continue
+                    if not result:
+                        continue
 
-                msg_id, event = result
+                    for data in result:
+                        if data.error:
+                            await self.redis.stream_ack(self.main_stream, data.data_id)
+                            raise BrainError(f"Error while processing a key event for the system. {data.data_id}")
 
-                match event:
-                    case CommandDayStart(config_id=config_id):
-                        await self._handle_day_start(config_id, event.trace_id)
-                    case CommandDayEnd(config_id=config_id):
-                        event = LLMRequestEnd.model_validate({
-                            "config_id": config_id,
-                            "trace_id": event.trace_id
-                        })
-                        await self.stream.dispatch_event(event, self.produce_stream)
-                    case CommandClean(config_id=config_id):
-                        await self._handle_clean(config_id, event.trace_id)
-                        event = LLMRequestEnd.model_validate({
-                            "config_id": config_id,
-                            "trace_id": event.trace_id
-                        })
-                        await self.stream.dispatch_event(event, self.produce_stream)
-                    case Pulse(config_id=config_id, is_first_of_day=is_first_of_day, is_last_of_day=is_last_of_day,
-                               label=label):
-                        await self._handle_pulse(config_id, event.trace_id, is_first_of_day, is_last_of_day, label)
+                        raw_event_type = data.payload.get("event_type")
+                        match raw_event_type:
+                            case "CommandPulse":
+                                event = CommandPulse.model_validate(data.payload)
+                                if event.config_id in self.llm.sessions:
+                                    await self._handle_slot_start(event)
+                                else:
+                                    await self._handle_pulse(event)
+                            case "CommandDayEnd":
+                                event = CommandDayEnd.model_validate(data.payload)
+                                await self._handle_day_end(event)
+                            case "EventClean":
+                                event = EventClean.model_validate(data.payload)
+                                await self._handle_clean(event)
+                            case _:
+                                logger.warning(f"Unexpected event type: {raw_event_type}")
+                                await self.redis.stream_ack(self.main_stream, data.data_id)
+                except StreamError as e:
+                    raise BrainError(f"Stream logic failed: {e}")
+                except Exception as e:
+                    raise BrainError(f"Critical error in SchedulerWorker loop: {e}")
 
-                    case _:
-                        logger.warning(f"Unexpected event in system_stream: {type(event).__name__}")
-                await self.stream.ack(msg_id)
-            except StreamError as e:
-                raise BrainError(f"Stream logic failed: {e}")
-            except Exception as e:
-                raise BrainError(f"Critical error in SchedulerWorker loop: {e}")
-
-    async def _handle_day_start(self, config_id: int, trace_id: str):
+    async def _handle_slot_start(self, event: CommandPulse):
         """
         Handle the start of the day by gathering participant context and dispatching an LLM request.
         """
-        silence_lock_key = f"silence_lock:{config_id}"
+        bot_config = await self.db.get_bot_config_by_id(command.config_id)
+
         try:
-            if await self.redis.has_flag(silence_lock_key):
-                logger.warning(f"There is a block in chat {config_id}, skipping event {trace_id}.")
+            bot_config = await self.db.get_bot_config_by_id(command.config_id)
+            silent_key = RedisKey(key=f"silence_lock:{bot_config.chat_id}")
+            if await self.redis.has_key(silent_key):
+                logger.warning(f"There is a block in chat {bot_config.config_id}, skipping event {command.trace_id}.")
                 return
             logger.debug(
                 f"Starting the beginning of the day for config_id={config_id}. Gathering context..."
@@ -135,94 +146,11 @@ class BrainWorker:
                 f"Error in _handle_day_start for config_id={config_id}, trace_id={trace_id}. Cause: {e}."
             ) from e
 
-    async def _handle_clean(self, config_id: int, trace_id: str):
+    async def _handle_pulse(self, event: CommandPulse):
 
-        """
-        Performs the final cleanup for a single configuration.
-        """
-        logger.info(f"Starting final cleanup trace_id{trace_id} for config_id={config_id} . Wiping data...")
-        try:
-            keys_to_delete = [
-                f"messages_stream:{config_id}",
-                f"config_exists:{config_id}",
-                f"config_data:{config_id}",
-                f"silence_counter:{config_id}",
-                f"silence_lock:{config_id}"
-            ]
 
-            await self.redis.delete_many(keys_to_delete)
-            await self.db.delete_bot_config_by_id(config_id)
-            logger.info(
-                f"Final cleanup completed trace_id {trace_id} for config_id={config_id}.\
-                All related data removed.")
-        except Exception as e:
-            raise BrainError(
-                f"Error in _handle_clean for config_id={config_id}, trace_id={trace_id}. Cause: {e}."
-            ) from e
 
-    async def _handle_pulse(self, config_id: int, trace_id: str, is_first_of_day: bool, is_last_of_day: bool,
-                            label: str):
-        """
-        Handles a Pulse event:
-        1. Creates a temporary consumer for the chat-specific message stream.
-        2. Fetches a batch of messages.
-        3. Gathers current participant context.
-        4. Dispatches an LLMRequest with all the data.
-        5. Acknowledges the processed messages.
-        """
-        silence_lock_key = f"silence_lock:{config_id}"
-        silence_counter_key = f"silence_counter:{config_id}"
-        try:
-            if await self.redis.has_flag(silence_lock_key):
-                logger.warning(f"There is a block in chat {config_id}, skipping Pulse {trace_id}.")
-                return
-            if await self.redis.has_flag(silence_counter_key):
-                logger.warning(f"No messages from users, setting a block on chat {config_id}.")
-                await self.redis.set_flag(silence_lock_key, None)
 
-            message_driver = StreamDriver(
-                redis=self.redis,
-                consume_stream=f"messages_stream:{config_id}",
-                group_name="brain_messages_workers",
-                consumer_name=f"{self.worker_name}_reader"
-            )
 
-            messages: dict[int, str] = {}
-
-            await message_driver.ensure_group()
-            message_batch = await message_driver.next_event_batch()
-
-            if not message_batch:
-                logger.warning(
-                    f"No messages in {config_id}, setting {silence_counter_key}. Pulse_{trace_id}"
-                )
-                await self.redis.set_flag(silence_counter_key, None)
-
-            logger.debug(f"Processing messages for {config_id}, pulse_{trace_id}.")
-            for message in message_batch or []:
-                msg_id, event = message
-                match event:
-                    case Message(user_id=user_id, user_name=user_name, text=text):
-                        messages[user_id] = f"{user_name}: {text}"
-                        await message_driver.ack(msg_id)
-                    case _:
-                        logger.warning(
-                            f"Unexpected event in system_stream: {type(event).__name__} trace_id:{event.trace_id}")
-                        await message_driver.ack(msg_id)
-
-            llm_request_pulse = {
-                "config_id": config_id,
-                "is_first_of_day": is_first_of_day,
-                "is_last_of_day": is_last_of_day,
-                "label": label,
-                "messages": messages
-            }
-            event = LLMRequestPulse.model_validate(llm_request_pulse)
-            await self.stream.dispatch_event(event, self.produce_stream)
-        except Exception as e:
-            raise BrainError(
-                f"Error in _handle_pulse for config_id={config_id}, trace_id={trace_id}. Cause: {e}."
-            ) from e
-
-    def stop(self):
-        self.is_running = False
+def stop(self):
+    self.is_running = False

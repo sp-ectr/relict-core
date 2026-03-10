@@ -1,20 +1,26 @@
 """
 Base LLM Client Interface
-Defines the contract for any LLM client (only stateful).
+Defines the contract for any LLM client (stateless & stateful).
 """
 from typing import Protocol, runtime_checkable
-from events import LLMRequestStart, LLMRequestEnd, LLMRequestPulse, LLMResponse
+
+from relict_core.config.schemas import LLMRequest, PersonalityManifest, LLMResponse
+
 
 @runtime_checkable
 class BaseLLMClient(Protocol):
+    """
+    Contract for any LLM client.
+    """
 
-    async def start_session(self, llm_request: LLMRequestStart) -> LLMResponse:
+    async def start_session(self, session_id: str | int, system_instruction: PersonalityManifest,
+                            prompt: LLMRequest) -> LLMResponse:
         """Initialize a stateful session (chat)."""
         pass
 
-    async def send_in_session(self, llm_request: LLMRequestPulse) -> LLMResponse:
+    async def send_in_session(self, session_id: int, request: LLMRequest) -> LLMResponse:
         """Send a message in an existing session and receive the response."""
 
-    async def end_session(self, llm_request: LLMRequestEnd) -> None:
+    async def end_session(self, session_id: str | int) -> None:
         """End/delete a session. Idempotent operation."""
         pass

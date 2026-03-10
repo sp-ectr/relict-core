@@ -5,6 +5,8 @@ Each class represents a unique, strictly-typed event that components
 (Producers and Consumers) use to communicate via Redis Streams.
 """
 import uuid
+from datetime import datetime
+
 from pydantic import BaseModel, Field, computed_field
 
 
@@ -91,32 +93,6 @@ class CommandPulse(BaseEvent):
     Represents a single beat in the bot's "heartbeat".
     """
     config_id: int
-    is_first_of_day: bool
-    is_last_of_day: bool
     label: str
+    timestamp: datetime
 
-# class LLMRequestStart(BaseEvent):
-#     config_id: int
-#     system_prompt: str
-#     participants_info: dict[int, Participant] = {}  # ключ user_id
-#
-#
-# class LLMRequestEnd(BaseEvent):
-#     config_id: int
-#
-#
-# class LLMRequestPulse(BaseEvent):
-#     config_id: int
-#     is_first_of_day: bool
-#     is_last_of_day: bool
-#     label: str
-#     messages: dict[int, str] = {}
-#
-#
-# class LLMResponse(BaseEvent):
-#     config_id: int
-#     text_reply: str | None
-#     new_memories: dict[int, str] | None  # ключ user_id
-#     respect_updates: dict[int, int]  # ключ user_id
-#     new_participants: dict[int, Participant]  # ключ user_id
-#     set_block: list[int] | None  # ignor

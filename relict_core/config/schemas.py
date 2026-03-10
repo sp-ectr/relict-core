@@ -45,6 +45,7 @@ class BotConfig(BaseModel):
         id: Unique identifier of the configuration. Assigned automatically when the record is created in the database.
         chat_id: Unique identifier of the chat; indexed in the database for faster lookup.
         admin_id: Unique identifier of the admin user for this chat.
+        shard_id: The shard index this bot is assigned to. Determines which BrainWorker process handles this bot's LLM sessions. Defaults to 0 (single-worker mode).
         timezone: Timezone string (e.g., "Europe/Moscow") used for scheduling and time-based operations.
         llm_client_name: Name of the language model client to use. Defaults to "gemini".
     """
@@ -52,6 +53,7 @@ class BotConfig(BaseModel):
     chat_id: int
     admin_id: int
     timezone: str
+    shard_id: int = 0
     llm_client_name: str = "gemini"
 
 
@@ -153,9 +155,9 @@ class StreamContext(BaseModel):
     stream: str = Field(..., pattern=r"^(raw_messages"
                                      r"|messages_stream:\d+"
                                      r"|system_stream"
-                                     r"|session_stream)$")
-    group: Literal["test", "operators", "schedulers"]
-    consumer: str = Field(default="consumer_0", pattern=r"^operator_\d+|scheduler_d+$")
+                                     r"|session_stream:shard_\d+)$")
+    group: Literal["test", "operators", "schedulers", "brain_workers"]
+    consumer: str = Field(default="consumer_0", pattern=r"^operator_\d+|scheduler_\d+|brain_worker_\d+$")
 
 
 class WorkerIdentety(BaseModel):
@@ -174,7 +176,7 @@ class WorkerIdentety(BaseModel):
         consumer_name: Derived consumer identifier in the format '<worker_name>_<index>'.
             Used when registering the worker as a consumer in a Redis stream group.
     """
-    worker_name: Literal["operator", "scheduler"]
+    worker_name: Literal["operator", "scheduler", "brain_worker"]
     index: int
 
     @property
@@ -226,31 +228,162 @@ class SchedulerSettings(BaseModel):
             Must be between 5 and 60. Defaults to 20.
         max_session_duration_min: Maximum length of a single active session in minutes.
             Must be between 10 and 240. Defaults to 40.
+        min_gap_between_sessions_min: Minimum pause between consecutive sessions in minutes.
+            Simulates natural breaks in human activity. Must be between 30 and 360. Defaults to 60.
+        max_gap_between_sessions_min: Maximum pause between consecutive sessions in minutes.
+            Simulates longer distractions or offline periods. Must be between 60 and 360. Defaults to 180.
         min_pulse_interval_sec: Minimum delay between individual actions (pulses) within a session.
             Acts as a hard rate-limit against LLM spam. Must be between 10 and 3600 seconds. Defaults to 60.
         max_pulse_interval_sec: Maximum delay between individual actions within a session.
             Simulates a "thinking" or "distracted" delay. Must be between 30 and 3600 seconds. Defaults to 180.
     """
     day_start_hour: int = Field(default=9, ge=0, le=23)
-    day_end_hour: int = Field(default=22, ge=0, le=23)
+    day_end_hour: int = Field(default=23, ge=0, le=23)
 
-    min_sessions_per_day: int = Field(default=5, ge=1, le=10)
-    max_sessions_per_day: int = Field(default=7, ge=2, le=15)
+    min_sessions_per_day: int = Field(default=3, ge=1, le=10)
+    max_sessions_per_day: int = Field(default=5, ge=2, le=15)
+
+    min_gap_between_sessions_min: int = Field(default=60, ge=30, le=360)
+    max_gap_between_sessions_min: int = Field(default=240, ge=60, le=360)
 
     min_session_duration_min: int = Field(default=20, ge=5, le=60)
-    max_session_duration_min: int = Field(default=40, ge=10, le=240)
+    max_session_duration_min: int = Field(default=60, ge=10, le=240)
 
-    min_pulse_interval_sec: int = Field(default=60, ge=10, le=3600)
-    max_pulse_interval_sec: int = Field(default=180, ge=30, le=3600)
+    min_pulse_interval_sec: int = Field(default=90, ge=10, le=3600)
+    max_pulse_interval_sec: int = Field(default=300, ge=30, le=3600)
+
 
 class Pulse(BaseModel):
     """Represents a single, precise moment for the bot to act."""
     timestamp: datetime
     label: str
-    is_first_of_day: bool = False
-    is_last_of_day: bool = False
+    is_first_of_slot: bool = False
+    is_last_of_slot: bool = False
+
 
 class SessionSlot(BaseModel):
     """Represents a macro-level window of bot activity."""
     start: datetime
     end: datetime
+
+
+class PersonalityManifest(BaseModel):
+    """
+    Core identity and behavioral contract for the bot.
+    Serialized via model_dump_json() and passed ONCE as system_instruction
+    when the LLM session opens. Never sent again — model holds it in context.
+    """
+    role: str = Field(
+        description="Who the bot is. Full persona: name, background, age, occupation, personality traits."
+    )
+    goal: str = Field(
+        description="The primary objective. What the bot is trying to achieve in this chat long-term."
+    )
+    response_style: str = Field(
+        description="Communication style. Tone, vocabulary, message length, use of emoji, slang etc."
+    )
+    pulse_behavior: str = Field(
+        description="How to behave during pulse-driven activity. "
+                    "On first pulse of slot — just came online, act naturally. "
+                    "On last pulse — wrapping up, may go quiet soon. "
+                    "Not every pulse requires a response — use judgment."
+    )
+    relationship_rules: str = Field(
+        description="How to manage relationship scores 0-100. "
+                    "Score 0 = permanent ignore. Score 100 = maximum trust."
+    )
+    memories_behavior: str = Field(
+        description="How to form memories. Max 10 per participant, oldest auto-deleted. Be selective."
+    )
+    restrictions: list[str] = Field(default_factory=list)
+    response_contract: str = Field(
+        default=(
+            "ALWAYS respond with valid JSON matching this schema exactly. "
+            "NEVER add text outside JSON. NEVER wrap in markdown.\n"
+            '{"text_reply": "str or null", '
+            '"new_memories": {"user_id": "memory"} or null, '
+            '"respect_updates": {"user_id": 0-100} or null, '
+            '"new_participants": {"user_id": {"custom_name": "str", "gender": "male/female"}} or null, '
+            '"set_block": [user_id] or null}'
+        )
+    )
+
+
+class LLMRequest(BaseModel):
+    """
+    Full context package sent to the LLM on every pulse.
+
+    Attributes:
+        timestamp: Exact time of the pulse. Use it to understand time of day and context.
+        label: Time-of-day label — morning, day, evening, or night.
+        participants_info: Known participants keyed by user_id (int).
+            If a user_id appears in messages but not here — they are new.
+            Introduce yourself in your persona's style and collect their info.
+        messages: Recent chat messages keyed by user_id (int).
+            Format: {user_id: "username: message text"}.
+            Use user_id as the key to match messages with participants_info.
+    """
+    timestamp: datetime = Field(
+        description="Exact time of the pulse. Use it to understand time of day, "
+                    "how long you were offline, and what mood fits the moment."
+    )
+    label: str = Field(
+        description="Time-of-day label: morning, day, evening, or night. "
+                    "Use it to set the tone of your response."
+    )
+    participants_info: dict[int, Participant] = Field(
+        default={},
+        description="Known participants keyed by user_id. "
+                    "If a user_id from messages is missing here — this is a new person. "
+                    "Introduce yourself and return their info in new_participants."
+    )
+    messages: dict[int, str] = Field(
+        default={},
+        description="Recent chat messages keyed by user_id. "
+                    "Format: {user_id: 'username: message text'}. "
+                    "Empty dict means no new messages — decide whether to initiate or stay silent."
+    )
+
+
+class LLMResponse(BaseModel):
+    """
+    Structured response returned by the LLM after processing a pulse.
+    Always return a valid JSON object matching this schema exactly.
+    Use null for fields that are not applicable this pulse.
+
+    Attributes:
+        text_reply: The message to send to the chat.
+            None if the bot decides to stay silent this pulse.
+        new_memories: New long-term memories to save, keyed by user_id.
+            Be selective — memory is limited to 10 entries per participant,
+            oldest are deleted automatically. Only save what truly matters.
+        respect_updates: Updated relationship scores keyed by user_id.
+            Return only scores that changed this pulse. Values must be 0-100.
+            Score 0 triggers permanent ignore automatically.
+        new_participants: Info about newly introduced participants keyed by user_id.
+            Only return if introduction happened this pulse.
+            Each entry must contain: custom_name (str), gender (male/female/unknown).
+        set_block: List of user_ids to permanently block.
+            Use only when a hard restriction from persona was violated.
+    """
+    text_reply: str | None = Field(
+        default=None,
+        description="Message to send to chat. None = stay silent this pulse."
+    )
+    new_memories: dict[int, str] | None = Field(
+        default=None,
+        description="Long-term memories keyed by user_id. Max 10 per participant. Be selective."
+    )
+    respect_updates: dict[int, int] | None = Field(
+        default=None,
+        description="Changed relationship scores keyed by user_id. Values 0-100. Only changed scores."
+    )
+    new_participants: dict[int, dict[str, str]] | None = Field(
+        default=None,
+        description="Newly introduced participants keyed by user_id. "
+                    "Required fields: custom_name (str), gender (male/female/unknown)."
+    )
+    set_block: list[int] | None = Field(
+        default=None,
+        description="user_ids to permanently block. Only on hard restriction violation."
+    )

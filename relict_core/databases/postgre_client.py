@@ -173,7 +173,8 @@ class AsyncPostgreManager:
         """Creates or updates bot configuration for a specific chat."""
         sql_params = SQLParams(
             query=queries.UPSERT_BOT_CONFIG,
-            params=(bot_config.chat_id, bot_config.admin_id, bot_config.timezone, bot_config.llm_client_name),
+            params=(bot_config.chat_id, bot_config.admin_id, bot_config.timezone, bot_config.shard_id,
+                    bot_config.llm_client_name),
             mode="fetch_val"
         )
         config_id = await self._execute(sql_params)
@@ -245,7 +246,8 @@ class AsyncPostgreManager:
         participant_id = await self._execute(
             SQLParams(
                 query=queries.INSERT_PARTICIPANT,
-                params=(participant.config_id, participant.user_id, participant.custom_name, participant.gender, participant.relationship_score),
+                params=(participant.config_id, participant.user_id, participant.custom_name, participant.gender,
+                        participant.relationship_score),
                 mode="fetch_val"
             )
         )

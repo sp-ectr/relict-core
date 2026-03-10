@@ -2,8 +2,8 @@
 Queries for interacting with PostgreSQL databases.
 """
 UPSERT_BOT_CONFIG = """
-INSERT INTO bot_configs (chat_id, admin_id, timezone, llm_client_name)
-VALUES ($1, $2, $3, $4)
+INSERT INTO bot_configs (chat_id, admin_id, timezone, shard_id, llm_client_name)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (chat_id) DO UPDATE SET
     admin_id = EXCLUDED.admin_id,
     timezone = EXCLUDED.timezone,
@@ -12,13 +12,13 @@ RETURNING id;
 """
 
 GET_BOT_CONFIG = """
-SELECT id, chat_id, admin_id, timezone, llm_client_name
+SELECT id, chat_id, admin_id, timezone, shard_id,  llm_client_name
 FROM bot_configs
 WHERE chat_id = $1;
 """
 
 GET_BOT_CONFIG_BY_ID = """
-SELECT id, chat_id, admin_id, timezone, llm_client_name
+SELECT id, chat_id, admin_id, timezone, shard_id,  llm_client_name
 FROM bot_configs
 WHERE id = $1;
 """

@@ -62,3 +62,7 @@ class RedisSettings(_BaseSettings):
     """
     redis_host: str
     redis_port: int
+
+class LLMSettings(_BaseSettings):
+    api_key: str
+    model_name: str = "gemini-2.0-flash"

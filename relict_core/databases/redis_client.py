@@ -181,4 +181,4 @@ class RedisClient:
         try:
             await self._client.xack(opts.stream, opts.group, data_id)
         except Exception as e:
-            logger.critical(f"Unexpected error occurred while acknowledging Redis stream: {e}")
+            raise StreamError(f"Unexpected error occurred while acknowledging Redis stream: {e}")
