@@ -14,11 +14,11 @@ Traditional chatbots are reactive puppets. `relict-core` is designed to build pr
 
 ## Key Features
 
--   **Proactive Agency:** Powered by a `PulsePlanner`, entities have their own "heartbeat," allowing them to act independently on a life-like, non-deterministic schedule.
--   **Configurable Motivation System:** The core of each personality is defined in a configuration file, dictating how its internal state changes based on user interactions. This dynamically alters the entity's behavior, tone, and decisions.
--   **Long-Term Memory:** Entities persist key facts and interactions in a PostgreSQL database, allowing them to reference past events across days or weeks.
+-   ** Proactive Agency:** Powered by a `PulsePlanner`, entities have their own "heartbeat," allowing them to act independently on a life-like, non-deterministic schedule.
+-   ** Configurable Motivation System:** The core of each personality is defined in a configuration file, dictating how its internal state changes based on user interactions. This dynamically alters the entity's behavior, tone, and decisions.
+-   ** Long-Term Memory:** Entities persist key facts and interactions in a PostgreSQL database, allowing them to reference past events across days or weeks.
 -   **Resilient SAGA Architecture:** Inspired by microservices, the engine is composed of independent, stateless workers communicating via Redis Streams. This ensures high availability and fault tolerance.
--   **Pluggable Layers:** Built with dependency injection, allowing developers to easily swap out LLM providers or databases.
+-   ** Pluggable Layers:** Built with dependency injection, allowing developers to easily swap out LLM providers or databases.
 
 ## Architectural Principles
 

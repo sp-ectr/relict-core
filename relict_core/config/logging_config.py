@@ -1,5 +1,9 @@
 """
-Logger setup.
+Logging configuration and error-handling decorator for the Relict engine.
+
+Provides:
+- setup_logging(): configures console and rotating file handlers via environment variables.
+- log_error(): decorator for automatic exception logging on both sync and async functions.
 """
 import asyncio
 import logging
@@ -14,7 +18,7 @@ def setup_logging() -> None:
     """Configures global logging settings for the application."""
     log_level_name = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    log_file = os.getenv("LOG_FILE", "logs/bot.log")
+    log_file = os.getenv("LOG_FILE", "logs/relict_bot_db.log")
     log_dir = os.path.dirname(log_file)
 
     if log_dir and not os.path.exists(log_dir):
@@ -34,12 +38,12 @@ def setup_logging() -> None:
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
     )
 
-    consol_handler = logging.StreamHandler()
-    consol_handler.setLevel(
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(
         logging.INFO if log_level_name != "DEBUG" else logging.DEBUG
     )
-    consol_handler.setFormatter(formatter)
-    root_logger.addHandler(consol_handler)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
 
     if log_file:
         try:
