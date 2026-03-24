@@ -16,7 +16,7 @@ from relict_core.config.events import (EventStart,
                                        )
 from relict_core.config.relict_settings import PostgreSettings, RedisSettings
 from relict_core.config.logging_config import log_error
-from relict_core.config.schemas import SchedulerSettings, WorkerIdentety, StreamContext, BotConfig
+from relict_core.config.schemas import SchedulerSettings, WorkerIdentity, StreamContext
 from relict_core.config.exceptions import SchedulerError, StreamError
 from relict_core.drivers.pulse_planner import PulsePlanner
 
@@ -32,7 +32,7 @@ class SessionWorker:
             self,
             postgre_opts: PostgreSettings,
             redis_opts: RedisSettings,
-            worker_opts: WorkerIdentety,
+            worker_opts: WorkerIdentity,
             scheduler_opts: SchedulerSettings
     ):
         self.postgre_opts = postgre_opts
@@ -53,11 +53,7 @@ class SessionWorker:
     async def run(self):
         """The main event loop for the worker."""
         self.is_running = True
-        self.main_stream = StreamContext(
-            stream="system_stream",
-            group="schedulers",
-            consumer=self.worker_opts.consumer_name
-        )
+        self.main_stream = StreamContext.system_stream(self.worker_opts.consumer_name)
 
         self.db = AsyncPostgreManager(self.postgre_opts)
         self.redis = RedisClient(self.redis_opts)
@@ -74,24 +70,24 @@ class SessionWorker:
                     if not result:
                         continue
 
-                    for data in result:
-                        if data.error:
-                            await self.redis.stream_ack(self.main_stream, data.data_id)
-                            raise SchedulerError(f"Error while processing a key event for the system. {data.data_id}")
+                    try:
+                        for data in result:
+                            if data.error:
+                                raise SchedulerError(
+                                    f"Error while processing a key event for the system. {data.data_id}:{data.payload}")
 
-                        raw_event_type = data.payload.get("event_type")
-                        match raw_event_type:
-                            case "EventStart":
-                                event = EventStart.model_validate(data.payload)
-                                await self._handle_start(event)
-                                await self.redis.stream_ack(self.main_stream, data.data_id)
-                            case "EventClean":
-                                event = EventClean.model_validate(data.payload)
-                                await self._handle_clean(event)
-                                await self.redis.stream_ack(self.main_stream, data.data_id)
-                            case _:
-                                logger.warning(f"Unexpected event type: {raw_event_type}")
-                                await self.redis.stream_ack(self.main_stream, data.data_id)
+                            raw_event_type = data.payload.get("event_type")
+                            match raw_event_type:
+                                case "EventStart":
+                                    event = EventStart.model_validate(data.payload)
+                                    await self._handle_start(event)
+                                case "EventClean":
+                                    event = EventClean.model_validate(data.payload)
+                                    await self._handle_clean(event)
+                                case _:
+                                    logger.warning(f"Unexpected event type: {raw_event_type}")
+                    finally:
+                        await self.redis.stream_ack(self.main_stream, data.data_id)
                 except StreamError as e:
                     raise SchedulerError(f"Stream logic failed: {e}")
                 except Exception as e:
@@ -114,8 +110,7 @@ class SessionWorker:
                 self._handle_day_start,
                 trigger=CronTrigger(hour=self.scheduler_opts.day_start_hour, minute=0, timezone=timezone),
                 kwargs={
-                    "command": start_command,
-                    "bot_config":bot_config
+                    "command": start_command
                 },
                 id=f"day_start_{event.config_id}",
                 conflict_policy=ConflictPolicy.replace
@@ -146,7 +141,7 @@ class SessionWorker:
                 return
 
             logger.info(f"Active hours: triggering initial DayStart for config_id={event.config_id}")
-            await self._handle_day_start(start_command, bot_config)
+            await self._handle_day_start(start_command)
 
         except ZoneInfoNotFoundError:
             await self._remove_jobs_for_config(event.config_id)
@@ -156,9 +151,10 @@ class SessionWorker:
             await self._remove_jobs_for_config(event.config_id)
             raise SchedulerError(f"Failed to schedule jobs for config {event.config_id}: {e}")
 
-    async def _handle_day_start(self, command: CommandDayStart, bot_config: BotConfig, now: datetime | None = None):
+    async def _handle_day_start(self, command: CommandDayStart, now: datetime | None = None):
         logger.debug(f"Handling СommandDayStart for config_id={command.config_id}. Planning pulses...")
         try:
+            bot_config = await self.db.get_bot_config_by_id(command.config_id)
             await self._remove_pulse_for_config(command.config_id)
             timezone = ZoneInfo(bot_config.timezone)
             pulse_planner = PulsePlanner(timezone, self.scheduler_opts, now=now)
@@ -168,18 +164,16 @@ class SessionWorker:
                 pulse_command = CommandPulse(
                     config_id=command.config_id,
                     label=pulse.label,
-                    timestamp=pulse.timestamp
+                    timestamp=pulse.timestamp,
+                    is_first_of_slot=pulse.is_first_of_slot,
+                    is_last_of_slot=pulse.is_last_of_slot
                 )
                 await self.scheduler.add_schedule(
                     self.redis.stream_add,
                     trigger=DateTrigger(pulse.timestamp),
                     kwargs={
                         "data": pulse_command,
-                        "opts": StreamContext(
-                            stream=f"session_stream:shard_{bot_config.shard_id}",
-                            group="schedulers",
-                            consumer=self.worker_opts.consumer_name
-                        )
+                        "opts": StreamContext.session_stream(bot_config.shard_id, self.worker_opts.consumer_name)
                     },
                     id=f"pulse_{pulse.timestamp.isoformat()}_{command.config_id}",
                     conflict_policy=ConflictPolicy.replace
@@ -200,11 +194,7 @@ class SessionWorker:
             bot_config = await self.db.get_bot_config_by_id(command.config_id)
             await self.redis.stream_add(
                 command,
-                StreamContext(
-                    stream=f"session_stream:shard_{bot_config.shard_id}",
-                    group="schedulers",
-                    consumer=self.worker_opts.consumer_name
-                )
+                StreamContext.session_stream(bot_config.shard_id, self.worker_opts.consumer_name)
             )
         except Exception as e:
             raise SchedulerError(
@@ -222,11 +212,7 @@ class SessionWorker:
             await self._remove_pulse_for_config(event.config_id)
             await self.redis.stream_add(
                 event,
-                StreamContext(
-                    stream=f"session_stream:shard_{bot_config.shard_id}",
-                    group="schedulers",
-                    consumer=self.worker_opts.consumer_name
-                )
+                StreamContext.session_stream(bot_config.shard_id, self.worker_opts.consumer_name)
             )
         except Exception as e:
             raise SchedulerError(f"Failed _handle_clean for config {event.config_id} with event {event.trace_id}: {e}")
@@ -254,4 +240,9 @@ class SessionWorker:
         logger.debug(f"Removed all pulse schedules for config_id={config_id}.")
 
     def stop(self):
-        self.is_running = False
+        if self.is_running:
+            logger.info(f"Stopping {self.worker_opts.consumer_name}...")
+            self.is_running = False
+        else:
+            logger.debug(f"{self.worker_opts.consumer_name} already stopped or not started")
+

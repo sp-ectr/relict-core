@@ -63,26 +63,39 @@ class Participant(BaseModel):
     after the first interaction.
 
     Attributes:
-        id: Unique identifier of the participant in the database. Assigned automatically when the record is created.
         config_id: ID of the bot configuration the participant is associated with; indexed for faster lookup.
         user_id: Unique identifier of the participant from an external source (e.g., Telegram via aiogram);
             indexed together with config_id.
         custom_name: Name remembered or assigned by the bot, or the name the participant provided.
-        gender: Participant's gender.
         relationship_score: Bot's perception of the participant, used to influence responses.
             Default is 50. Bot adjusts up or down based on interactions.
         is_ignored: If True, the bot silently drops all messages from this participant.
         last_interaction_at: Timestamp of the participant's last interaction with the bot.
         memories: List of participant's long-term memories stored by the bot. None if not yet loaded.
     """
-    id: int = None
     config_id: int
     user_id: int
     custom_name: str
-    gender: str
     relationship_score: int = 50
     is_ignored: bool = False
     last_interaction_at: datetime | None = None
+    memories: list[str] | None = None
+
+
+class ParticipantInfo(BaseModel):
+    """
+    Lightweight participant snapshot passed to the LLM on every pulse.
+    Contains only the fields relevant for LLM context building.
+
+    Attributes:
+        user_id: Platform-specific user identifier.
+        custom_name: Name remembered or assigned by the bot.
+        relationship_score: Current relationship score (0-100).
+        memories: Long-term memories associated with this participant. None if none exist.
+    """
+    user_id: int
+    custom_name: str
+    relationship_score: int
     memories: list[str] | None = None
 
 
@@ -108,6 +121,18 @@ class RedisKey(BaseModel):
                 r"|silence_counter:\d+"
                 r"|rate_limit_user:\d+)$"
     )
+
+    @classmethod
+    def silence_lock(cls, config_id: int) -> "RedisKey":
+        return cls(key=f"silence_lock:{config_id}")
+
+    @classmethod
+    def silence_counter(cls, config_id: int) -> "RedisKey":
+        return cls(key=f"silence_counter:{config_id}")
+
+    @classmethod
+    def rate_limit(cls, user_id: int) -> "RedisKey":
+        return cls(key=f"rate_limit_user:{user_id}")
 
 
 class RedisData(BaseModel, Generic[T]):
@@ -155,12 +180,32 @@ class StreamContext(BaseModel):
     stream: str = Field(..., pattern=r"^(raw_messages"
                                      r"|messages_stream:\d+"
                                      r"|system_stream"
-                                     r"|session_stream:shard_\d+)$")
-    group: Literal["test", "operators", "schedulers", "brain_workers"]
-    consumer: str = Field(default="consumer_0", pattern=r"^operator_\d+|scheduler_\d+|brain_worker_\d+$")
+                                     r"|session_stream:shard_\d+"
+                                     r"|brain_stream)|$")
+    group: Literal["test", "operators", "schedulers", "brain_workers", "response_workers"]
+    consumer: str = Field(default="consumer_0", pattern=r"^consumer_\d|operator_\d+|scheduler_\d+|brain_worker_\d+|response_worker_\d+$")
 
+    @classmethod
+    def raw_messages(cls, consumer: str) -> "StreamContext":
+        return cls(stream="raw_messages", group="operators", consumer=consumer)
 
-class WorkerIdentety(BaseModel):
+    @classmethod
+    def message_stream(cls, config_id: int, consumer: str) -> "StreamContext":
+        return cls(stream=f"messages_stream:{config_id}", group="brain_workers", consumer=consumer)
+
+    @classmethod
+    def system_stream(cls, consumer: str) -> "StreamContext":
+        return cls(stream="system_stream", group="schedulers", consumer=consumer)
+
+    @classmethod
+    def session_stream(cls, shard: int, consumer: str) -> "StreamContext":
+        return cls(stream=f"session_stream:shard_{shard}", group="brain_workers", consumer=consumer)
+
+    @classmethod
+    def brain_stream(cls, consumer: str) -> "StreamContext":
+        return cls(stream="brain_stream", group="response_workers", consumer=consumer)
+
+class WorkerIdentity(BaseModel):
     """
     Identity descriptor for a worker instance.
 
@@ -202,8 +247,8 @@ class RawStreamData(BaseModel):
         error: True if the message was malformed and could not be deserialized.
             Consumers should acknowledge and skip messages with error=True.
     """
-    data_id: str = None
-    payload: dict = None
+    data_id: str | None = None
+    payload: dict | None = None
     error: bool = False
 
 
@@ -254,7 +299,15 @@ class SchedulerSettings(BaseModel):
 
 
 class Pulse(BaseModel):
-    """Represents a single, precise moment for the bot to act."""
+    """
+    Represents a single, precise moment for the bot to act.
+
+    Attributes:
+        timestamp: Exact datetime of the pulse.
+        label: Time-of-day label (morning, day, evening, night).
+        is_first_of_slot: True if this is the opening pulse of the activity slot.
+        is_last_of_slot: True if this is the closing pulse of the activity slot.
+    """
     timestamp: datetime
     label: str
     is_first_of_slot: bool = False
@@ -262,7 +315,13 @@ class Pulse(BaseModel):
 
 
 class SessionSlot(BaseModel):
-    """Represents a macro-level window of bot activity."""
+    """
+    Represents a macro-level window of bot activity.
+
+    Attributes:
+        start: Datetime when the slot begins.
+        end: Datetime when the slot ends.
+    """
     start: datetime
     end: datetime
 
@@ -284,8 +343,9 @@ class PersonalityManifest(BaseModel):
     )
     pulse_behavior: str = Field(
         description="How to behave during pulse-driven activity. "
-                    "On first pulse of slot — just came online, act naturally. "
-                    "On last pulse — wrapping up, may go quiet soon. "
+                    "On first pulse of slot (is_first_of_slot=True) — you just came online, "
+                    "act naturally, improvise where you've been if asked. "
+                    "On last pulse (is_last_of_slot=True) — wrap up, say goodbye in your style. "
                     "Not every pulse requires a response — use judgment."
     )
     relationship_rules: str = Field(
@@ -293,7 +353,10 @@ class PersonalityManifest(BaseModel):
                     "Score 0 = permanent ignore. Score 100 = maximum trust."
     )
     memories_behavior: str = Field(
-        description="How to form memories. Max 10 per participant, oldest auto-deleted. Be selective."
+        description="How to form memories. Max 10 per participant, oldest auto-deleted. Be selective. "
+                    "ALWAYS write in English. Max 5 words per memory entry. "
+                    "Facts only, no full sentences. "
+                    "Example: 'likes philosophy, reads' not 'Artem enjoys reading and is interested in philosophy'."
     )
     restrictions: list[str] = Field(default_factory=list)
     response_contract: str = Field(
@@ -302,9 +365,13 @@ class PersonalityManifest(BaseModel):
             "NEVER add text outside JSON. NEVER wrap in markdown.\n"
             '{"text_reply": "str or null", '
             '"new_memories": {"user_id": "memory"} or null, '
-            '"respect_updates": {"user_id": 0-100} or null, '
-            '"new_participants": {"user_id": {"custom_name": "str", "gender": "male/female"}} or null, '
-            '"set_block": [user_id] or null}'
+            '"respect_updates": {"user_id": integer_delta} or null, '
+            '"new_participants": {"user_id": {"custom_name": "str"}} or null, '
+            '"set_block": [user_id] or null}\n\n'
+            "MEMORY RULES: Write memories in English only. "
+            "Max 5 words per memory. Facts only, no sentences. "
+            "Good: 'likes philosophy, reads'. Bad: 'Artem enjoys reading and is interested in philosophy'.\n"
+            "NEW PARTICIPANTS RULES: custom_name in English only. Short, max 2 words."
         )
     )
 
@@ -331,7 +398,7 @@ class LLMRequest(BaseModel):
         description="Time-of-day label: morning, day, evening, or night. "
                     "Use it to set the tone of your response."
     )
-    participants_info: dict[int, Participant] = Field(
+    participants_info: dict[int, ParticipantInfo] = Field(
         default={},
         description="Known participants keyed by user_id. "
                     "If a user_id from messages is missing here — this is a new person. "
@@ -342,6 +409,17 @@ class LLMRequest(BaseModel):
         description="Recent chat messages keyed by user_id. "
                     "Format: {user_id: 'username: message text'}. "
                     "Empty dict means no new messages — decide whether to initiate or stay silent."
+    )
+
+    is_first_of_slot: bool = Field(
+        description="True if this is the first pulse of the activity slot. "
+                    "You just came online. If asked — you can improvise where you've been. "
+                    "Act naturally, as if you just opened the app."
+    )
+    is_last_of_slot: bool = Field(
+        description="True if this is the last pulse of the slot. "
+                    "You are about to go offline. Wrap up the conversation naturally, "
+                    "say goodbye in your persona's style if appropriate."
     )
 
 
@@ -376,7 +454,8 @@ class LLMResponse(BaseModel):
     )
     respect_updates: dict[int, int] | None = Field(
         default=None,
-        description="Changed relationship scores keyed by user_id. Values 0-100. Only changed scores."
+        description="Relationship score changes keyed by user_id. "
+                    "Integer delta (e.g. +10, -5). Only changed scores."
     )
     new_participants: dict[int, dict[str, str]] | None = Field(
         default=None,

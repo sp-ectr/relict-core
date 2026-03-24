@@ -12,7 +12,7 @@ async def test_no_bot_config(redis_test, handler_test, operator_test):
 
     await asyncio.sleep(2)  # даем время обработать
 
-    await operator.stop()  # останавливаем worker
+    operator.stop()  # останавливаем worker
     await task  # ждём завершения задачи
 
     msg_count = await redis_test._client.xlen(f"messages_stream:{123}")  # чекаем создал ли воркер стрим
@@ -25,7 +25,7 @@ async def test_bot_config_success_and_no_silent_key(
     operator = operator_test(index=0)
 
     async with db_test.lifecycle():
-        await db_test.upsert_bot_config(
+        bot_id = await db_test.upsert_bot_config(
             BotConfig(
                 chat_id=123,
                 admin_id=123,
@@ -34,22 +34,22 @@ async def test_bot_config_success_and_no_silent_key(
         )
 
     async with redis_test.lifecycle():
-        await redis_test.set_key(RedisKey(key="silence_lock:123"), ttl=0)
-        await redis_test.set_key(RedisKey(key="silence_counter:123"), ttl=0)
+        await redis_test.set_key(RedisKey(key=f"silence_lock:{bot_id}"), ttl=0)
+        await redis_test.set_key(RedisKey(key=f"silence_counter:{bot_id}"), ttl=0)
 
     await handler_test(count=1)
 
     task = asyncio.create_task(operator.run())
     await asyncio.sleep(2)
-    await operator.stop()
+    operator.stop()
     await task
 
     async with redis_test.lifecycle():
-        msg_count = await redis_test._client.xlen("messages_stream:123")
+        msg_count = await redis_test._client.xlen(f"messages_stream:{bot_id}")
         assert msg_count > 0
 
-        assert not await redis_test.has_key(RedisKey(key="silence_lock:123"))
-        assert not await redis_test.has_key(RedisKey(key="silence_counter:123"))
+        assert not await redis_test.has_key(RedisKey(key=f"silence_lock:{bot_id}"))
+        assert not await redis_test.has_key(RedisKey(key=f"silence_counter:{bot_id}"))
 
 
 async def test_bot_config_participant_in_redis_cash_and_rate_limit_works(
@@ -76,7 +76,7 @@ async def test_bot_config_participant_in_redis_cash_and_rate_limit_works(
         assert await redis_test.has_key(RedisKey(key=f"rate_limit_user:123"))  # и рейт лимит установлен
 
     async with redis_test.lifecycle():
-        msg_count = await redis_test._client.xlen("messages_stream:123")
+        msg_count = await redis_test._client.xlen(f"messages_stream:{config_id}")
         assert msg_count == 10  # все что выше лимита должно быть проигнорировано
 
     async with db_test.lifecycle():
@@ -85,7 +85,6 @@ async def test_bot_config_participant_in_redis_cash_and_rate_limit_works(
                 config_id=config_id,
                 user_id=123,
                 custom_name="User",
-                gender="Male",
             )
         )  # добавляем пользователя чтоб он попал в кеш
 
@@ -101,18 +100,19 @@ async def test_bot_config_participant_in_redis_cash_and_rate_limit_works(
 
     await handler_test(count=15)  # закидываем еще 15 сообщений, пользователь уже в бд
     await asyncio.sleep(2)
-    await operator.stop()
+    operator.stop()
     await task
 
     async with redis_test.lifecycle():
-        msg_count = await redis_test._client.xlen("messages_stream:123")
+        msg_count = await redis_test._client.xlen(f"messages_stream:{config_id}")
         assert msg_count == 20  # чекаем что все предсказуемо + 10, а не 15
         config = await redis_test.get_data(RedisData.bot_config(123))
         assert config  # чекаем что кеш есть
         participant = await redis_test.get_data(RedisData.participant_config(config.id, 123))
         assert participant  # чекаем что участник в кеше
 
-async def test_black_mark_ignored_participant(db_test, redis_test, operator_test):
+async def test_black_mark_ignored_participant(db_test, redis_test, operator_test, handler_test):
+    await handler_test(count=1)
     operator = operator_test(index=0)
     async with db_test.lifecycle():
         config_id = await db_test.upsert_bot_config(BotConfig(chat_id=123, admin_id=123, timezone="Europe/Moscow"))
@@ -120,8 +120,7 @@ async def test_black_mark_ignored_participant(db_test, redis_test, operator_test
             Participant(
                 config_id=config_id,
                 user_id=123,
-                custom_name="IgnoredUser",
-                gender="Male"
+                custom_name="IgnoredUser"
             )
         )
         await db_test.set_ignore_status(participant_id, True) # ключевой флаг
@@ -142,14 +141,15 @@ async def test_black_mark_ignored_participant(db_test, redis_test, operator_test
     await asyncio.sleep(2)
 
     async with redis_test.lifecycle():
-        msg_count = await redis_test._client.xlen("messages_stream:123")
+        msg_count = await redis_test._client.xlen(f"messages_stream:{config_id}")
         assert msg_count == 0  # все сообщения должны быть отброшены
 
-    await operator.stop()
+    operator.stop()
     await task
 
 
-async def test_poison_pill_invalid_json(redis_test, operator_test):
+async def test_poison_pill_invalid_json(redis_test, operator_test, handler_test):
+    await handler_test(count=1)
     operator = operator_test(index=0)
     task = asyncio.create_task(operator.run())
     await asyncio.sleep(1)
@@ -167,7 +167,7 @@ async def test_poison_pill_invalid_json(redis_test, operator_test):
         pending = await redis_test._client.xpending("raw_messages", "operators")
         assert pending["pending"] == 0  # все мусорные сообщения ack'ed
 
-    await operator.stop()
+    operator.stop()
     await task
 
 

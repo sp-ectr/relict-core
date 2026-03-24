@@ -28,10 +28,8 @@ class AsyncPostgreManager:
     Handles connection pool lifecycle and async query execution.
     Used as the primary storage layer for application data.
 
-    Parameters
-    ----------
-    opts : PostgresSetting
-        Pydantic settings object containing PostgreSQL configuration.
+    Attributes:
+        opts: PostgreSQL configuration settings.
     """
 
     def __init__(self, opts: PostgreSettings):
@@ -214,7 +212,7 @@ class AsyncPostgreManager:
             SQLParams(query=queries.DELETE_BOT_CONFIG, params=(chat_id,))
         )
         if deleted_count > 0:
-            logger.debug("Configuration for chat {chat_id} deleted successfully.")
+            logger.debug(f"Configuration for {chat_id} deleted successfully.")
         else:
             logger.warning(
                 f"Attempted to delete non-existent configuration for chat {chat_id}."
@@ -231,7 +229,7 @@ class AsyncPostgreManager:
             SQLParams(query=queries.DELETE_BOT_CONFIG_BY_ID, params=(config_id,))
         )
         if deleted_count > 0:
-            logger.debug("Configuration for chat {chat_id} deleted successfully.")
+            logger.debug(f"Configuration for chat {config_id} deleted successfully.")
         else:
             logger.warning(
                 f"Attempted to delete non-existent configuration for config {config_id}."
@@ -246,7 +244,7 @@ class AsyncPostgreManager:
         participant_id = await self._execute(
             SQLParams(
                 query=queries.INSERT_PARTICIPANT,
-                params=(participant.config_id, participant.user_id, participant.custom_name, participant.gender,
+                params=(participant.config_id, participant.user_id, participant.custom_name,
                         participant.relationship_score),
                 mode="fetch_val"
             )
@@ -266,17 +264,17 @@ class AsyncPostgreManager:
         else:
             return None
 
-    # async def get_all_participants_with_memories(self, config_id: int) -> list[Participant] | []:
-    #     """Retrieves all active participants for a config, embedding their
-    #     latest memories directly into each participant's record."""
-    #     participant_list = await self._execute(
-    #         SQLParams(query=queries.GET_PARTICIPANTS_WITH_MEMORIES, params=(config_id,), mode="fetch_all")
-    #     )
-    #     participants = []
-    #     if participant_list:
-    #         for participant in participant_list:
-    #             participants.append(Participant.model_validate(participant))
-    #     return participants
+    async def get_all_participants_with_memories(self, config_id: int) -> list[Participant]:
+        """Retrieves all active participants for a config, embedding their
+        latest memories directly into each participant's record."""
+        participant_list = await self._execute(
+            SQLParams(query=queries.GET_PARTICIPANTS_WITH_MEMORIES, params=(config_id,), mode="fetch_all")
+        )
+        participants = []
+        if participant_list:
+            for participant in participant_list:
+                participants.append(Participant.model_validate(participant))
+        return participants
 
     async def update_relationship_score(self, participant: Participant, score_change: int) -> None:
         """Updates participant reputation only."""
@@ -290,12 +288,12 @@ class AsyncPostgreManager:
             SQLParams(query=queries.SET_IGNORED_STATUS, params=(status, participant_id))
         )
 
-    async def add_long_term_memory(
-            self, participant: Participant, memory_summary: str
-    ) -> None:
-        """Records a participant's memory and keeps only the latest 10 entries."""
-        await self._execute(SQLParams(query=queries.INSERT_LONG_TERM_MEMORY, params=(participant.id, memory_summary))
-                            )
+    async def add_long_term_memory(self, participant_id: int, memory_summary: str) -> None:
+        """Prepends new memory and keeps only the latest 10 entries."""
+        await self._execute(SQLParams(
+            query=queries.UPDATE_PARTICIPANT_MEMORY,
+            params=(participant_id, memory_summary)
+        ))
 
     @staticmethod
     def _record_to_dict(record: asyncpg.Record | None) -> dict[str, Any] | None:

@@ -4,8 +4,7 @@ Custom exceptions.
 
 
 class CustomError(Exception):
-    """Base databases error."""
-
+    """Base exception for all Relict engine errors."""
     pass
 
 
@@ -38,6 +37,7 @@ class RedisConnectionError(CustomError):
 
     pass
 
+
 class RedisError(CustomError):
     """Unexpected Redis error."""
 
@@ -49,16 +49,24 @@ class OperatorError(CustomError):
 
     pass
 
+
 class SchedulerError(CustomError):
     """Error during AsyncIOScheduler operation."""
 
     pass
+
 
 class BrainError(CustomError):
     """Error during brain_service operation."""
 
     pass
 
+
 class StreamError(CustomError):
-    """Ошибка при работе с стримом."""
+    """Error from stream."""
+    pass
+
+
+class AdapterError(CustomError):
+    """Error from adapter."""
     pass

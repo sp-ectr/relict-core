@@ -13,7 +13,7 @@ from redis.exceptions import ResponseError
 from relict_core.config.events import BaseEvent
 from relict_core.config.exceptions import RedisConnectionError, StreamError, RedisError
 from relict_core.config.relict_settings import RedisSettings
-from relict_core.config.schemas import T, RedisKey, RedisData, StreamContext, RawStreamData, BotConfig
+from relict_core.config.schemas import T, RedisKey, RedisData, StreamContext, RawStreamData
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +26,8 @@ class RedisClient:
     and Redis Streams with automatic trimming and expiration.
     Used as a foundation for event-driven and distributed systems.
 
-    Parameters
-    ----------
-    opts : RedisSettings
-        Pydantic settings object containing Redis configuration.
+    Attributes:
+        opts: Redis configuration settings.
     """
 
     def __init__(self, opts: RedisSettings):
@@ -70,6 +68,7 @@ class RedisClient:
 
     # -------------------- Key-value / JSON / Flags -------------------- #
     async def set_key(self, key: RedisKey, ttl: int | None = None):
+        """Set a flag key. ttl=None uses default TTL, ttl=0 sets key without expiration."""
         ttl_to_use = self._default_ttl if ttl is None else None if ttl == 0 else ttl
 
         try:
@@ -81,6 +80,7 @@ class RedisClient:
         return bool(await self._client.exists(key.key))
 
     async def set_data(self, key: RedisData[T], payload: T, ttl: int | None = None):
+        """Store a Pydantic model as JSON. ttl=None uses default TTL, ttl=0 sets key without expiration."""
         ttl_to_use = self._default_ttl if ttl is None else None if ttl == 0 else ttl
         try:
             await self._client.set(key.key, payload.model_dump_json(), ttl_to_use)
@@ -134,10 +134,10 @@ class RedisClient:
         except Exception as e:
             raise StreamError(f"Unexpected error occurred while working with the Redis stream: {e}")
 
-    async def stream_create_group(self, opts: StreamContext):
+    async def stream_create_group(self, opts: StreamContext, mk_stream: bool = False):
         """Create consumer group for a stream (idempotent)."""
         try:
-            await self._client.xgroup_create(opts.stream, opts.group, id="0", mkstream=True)
+            await self._client.xgroup_create(opts.stream, opts.group, id="0", mkstream=mk_stream)
             logger.debug(
                 f"Consumer group '{opts.group}' created for stream '{opts.stream}'.")
         except ResponseError as e:
@@ -150,7 +150,7 @@ class RedisClient:
             self,
             opts: StreamContext,
             count: int = 1,
-            block_ms: int = 0
+            block_ms: int | None = None
     ) -> list[RawStreamData]:
 
         response = await self._client.xreadgroup(
@@ -165,19 +165,19 @@ class RedisClient:
             return []
 
         result = []
-        for _, messages in response:
-            for data_id, data in messages:
+        for _, events in response:
+            for data_id, data in events:
                 try:
                     result.append(RawStreamData(data_id=data_id, payload=json.loads(data["payload"])))
                 except Exception as e:
                     logger.warning(
-                        f"Malformed message {data_id} in stream '{opts.stream}': {e}"
+                        f"Malformed event {data_id} in stream '{opts.stream}': {e}"
                     )
                     result.append(RawStreamData(data_id=data_id, error=True))
                     continue
         return result
 
-    async def stream_ack(self, opts: StreamContext, data_id: str):
+    async def stream_ack(self, opts: StreamContext, data_id: str) -> None:
         try:
             await self._client.xack(opts.stream, opts.group, data_id)
         except Exception as e:

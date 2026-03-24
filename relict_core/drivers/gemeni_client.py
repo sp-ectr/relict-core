@@ -5,6 +5,7 @@ Provides an adapter between the internal LLM interface and
 Google Gemini chat sessions. Manages session lifecycle and
 handles JSON request/response serialization.
 """
+from typing import Any
 
 from google import genai
 from google.genai.types import GenerateContentConfig
@@ -21,7 +22,7 @@ class GeminiClient(BaseLLMClient):
         """Initialize Gemini client and internal session storage."""
         self.client = genai.Client(api_key=opts.api_key)
         self.model_name = opts.model_name
-        self.sessions: dict = {}
+        self.sessions: dict[str | int, Any] = {}
 
     async def start_session(
             self,

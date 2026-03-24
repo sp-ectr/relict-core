@@ -28,6 +28,7 @@ class PulsePlanner:
         self.day_end = now.replace(hour=opts.day_end_hour, minute=0, second=0, microsecond=0)
 
     def plan_pulses_for_today(self) -> list[Pulse]:
+        """Plan all pulses for the current day across all session slots."""
         slots = self._plan_session_slots()
         if not slots:
             logger.debug("No session slots could be planned for the rest of the day.")
@@ -51,6 +52,10 @@ class PulsePlanner:
         return timedelta(minutes=random.randint(min_min, max_min))
 
     def _plan_session_slots(self) -> list[SessionSlot]:
+        """
+        Generate random session slots distributed across the active day window.
+        Respects min/max session count, duration, and gap constraints.
+        """
         effective_start = max(self.now, self.day_start)
         if effective_start >= self.day_end:
             return []
@@ -109,6 +114,7 @@ class PulsePlanner:
             pulses.append(Pulse(
                 timestamp=current_time,
                 label=self._label_for_hour(current_time.hour),
+                is_first_of_slot=len(pulses) == 0
             ))
 
             interval = random.randint(self.opts.min_pulse_interval_sec, self.opts.max_pulse_interval_sec)
@@ -118,6 +124,7 @@ class PulsePlanner:
                 pulses.append(Pulse(
                     timestamp=slot.end,
                     label=self._label_for_hour(slot.end.hour),
+                    is_last_of_slot=True
                 ))
                 break
 

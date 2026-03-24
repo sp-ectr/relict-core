@@ -9,6 +9,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, computed_field
 
+from relict_core.config.schemas import LLMResponse
+
 
 class BaseEvent(BaseModel):
     """
@@ -31,6 +33,16 @@ class BaseEvent(BaseModel):
 
 # --- Raw Input Events
 class RawMessage(BaseEvent):
+    """
+    Raw inbound message received directly from the platform (e.g. Telegram).
+    Passed as-is into the raw_messages stream for further processing.
+
+    Attributes:
+        chat_id: Platform-specific chat identifier.
+        user_id: Platform-specific user identifier.
+        user_name: Display name of the sender.
+        text: Raw message text.
+    """
     chat_id: int
     user_id: int
     user_name: str
@@ -86,7 +98,6 @@ class CommandDayEnd(BaseEvent):
 
 # --- Pulse & Turn Events ---
 
-
 class CommandPulse(BaseEvent):
     """
     A fine-grained trigger for the bot to "act" (think or speak).
@@ -95,4 +106,18 @@ class CommandPulse(BaseEvent):
     config_id: int
     label: str
     timestamp: datetime
+    is_first_of_slot: bool = False
+    is_last_of_slot: bool = False
 
+
+class Response(BaseEvent):
+    """
+    Carries the LLM's structured response back to the ResponseWorker
+    for delivery and state updates.
+
+    Attributes:
+        config_id: ID of the bot configuration this response belongs to.
+        content: Structured LLM output including reply text and side effects.
+    """
+    config_id: int
+    content: LLMResponse

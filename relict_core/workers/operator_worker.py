@@ -13,7 +13,7 @@ from relict_core.config.logging_config import log_error
 from relict_core.databases.redis_client import RedisClient
 from relict_core.databases.postgre_client import AsyncPostgreManager
 from relict_core.config.relict_settings import PostgreSettings, RedisSettings
-from relict_core.config.schemas import WorkerIdentety, StreamContext, RedisKey, RedisData
+from relict_core.config.schemas import WorkerIdentity, StreamContext, RedisKey, RedisData
 from relict_core.config.events import RawMessage, Message
 
 logger = logging.getLogger(__name__)
@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 
 class OperatorWorker:
     def __init__(
-        self,
-        postgre_opts: PostgreSettings,
-        redis_opts: RedisSettings,
-        worker_opts: WorkerIdentety
+            self,
+            postgre_opts: PostgreSettings,
+            redis_opts: RedisSettings,
+            worker_opts: WorkerIdentity
     ):
         self.postgre_opts = postgre_opts
         self.redis_opts = redis_opts
@@ -42,11 +42,7 @@ class OperatorWorker:
     async def run(self):
         """The main event loop for the worker."""
         self.is_running = True
-        self.main_stream = StreamContext(
-            stream="raw_messages",
-            group="operators",
-            consumer=self.worker_opts.consumer_name,
-        )
+        self.main_stream = StreamContext.raw_messages(self.worker_opts.consumer_name)
         self.db = AsyncPostgreManager(self.postgre_opts)
         self.redis = RedisClient(self.redis_opts)
 
@@ -63,35 +59,27 @@ class OperatorWorker:
                         continue
 
                     for data in result:
-                        if data.error:
-                            await self.redis.stream_ack(self.main_stream, data.data_id)
-                            continue
+                        try:
+                            if data.error:
+                                continue
 
-                        raw_event_type = data.payload.get("event_type")
-                        match raw_event_type:
-                            case "RawMessage":
-                                event = RawMessage.model_validate(data.payload)
-                                await self._handle_event(event)
-                                await self.redis.stream_ack(self.main_stream, data.data_id)
-                            case _:
-                                logger.warning(f"Unexpected event type: {raw_event_type}")
-                                await self.redis.stream_ack(self.main_stream, data.data_id)
+                            raw_event_type = data.payload.get("event_type")
+                            match raw_event_type:
+                                case "RawMessage":
+                                    event = RawMessage.model_validate(data.payload)
+                                    await self._handle_message(event)
+                                case _:
+                                    logger.warning(f"Unexpected event type: {raw_event_type}")
+
+                        finally:
+                            await self.redis.stream_ack(self.main_stream, data.data_id)
 
                 except Exception as e:
-                    logger.exception("Critical error in OperatorWorker main loop")
                     raise OperatorError(f"Critical error in OperatorWorker loop: {e}") from e
 
         logger.info(f"{self.worker_opts.consumer_name} gracefully stopped")
 
-    async def stop(self):
-        """Gracefully stop the worker loop."""
-        if self.is_running:
-            logger.info(f"Stopping {self.worker_opts.consumer_name}...")
-            self.is_running = False
-        else:
-            logger.debug(f"{self.worker_opts.consumer_name} already stopped or not started")
-
-    async def _handle_event(self, event: RawMessage):
+    async def _handle_message(self, event: RawMessage):
         """
         Processes an incoming raw message:
         - applies per-user rate limiting
@@ -100,16 +88,15 @@ class OperatorWorker:
         - resets silence state on valid activity
         """
         config_key = RedisData.bot_config(event.chat_id)
-        rate_limit_key = RedisKey(key=f"rate_limit_user:{event.user_id}")
-        silent_key = RedisKey(key=f"silence_lock:{event.chat_id}")
-        silent_counter_key = RedisKey(key=f"silence_counter:{event.chat_id}")
-
+        rate_limit_key = RedisKey.rate_limit(event.user_id)
         if not (bot_config := await self.redis.get_data(config_key)):
             bot_config = await self.db.get_bot_config(event.chat_id)
             if not bot_config:
                 logger.info(f"No bot config found for chat {event.chat_id}, dropping")
                 return
             await self.redis.set_data(config_key, bot_config)
+        silent_key = RedisKey.silence_lock(bot_config.id)
+        silent_counter_key = RedisKey.silence_counter(bot_config.id)
 
         current_count = await self.redis.increment_counter(rate_limit_key, ttl=5)
         if current_count > 10:
@@ -139,11 +126,7 @@ class OperatorWorker:
             trace_id=event.trace_id
         )
 
-        produce_stream = StreamContext(
-            stream=f"messages_stream:{event.chat_id}",
-            group="operators",
-            consumer=self.worker_opts.consumer_name
-        )
+        produce_stream = StreamContext.message_stream(bot_config.id, self.worker_opts.consumer_name)
 
         try:
             event_id = await self.redis.stream_add(new_event, produce_stream)
@@ -154,4 +137,10 @@ class OperatorWorker:
                 exc_info=True
             )
 
-
+    def stop(self):
+        """Gracefully stop the worker loop."""
+        if self.is_running:
+            logger.info(f"Stopping {self.worker_opts.consumer_name}...")
+            self.is_running = False
+        else:
+            logger.debug(f"{self.worker_opts.consumer_name} already stopped or not started")

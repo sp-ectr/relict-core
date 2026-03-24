@@ -1,3 +1,10 @@
+"""
+Pydantic settings models for all system components.
+
+Loads configuration from environment variables and .env file.
+Covers PostgreSQL, Redis, LLM client, and bot adapter settings.
+"""
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,6 +70,24 @@ class RedisSettings(_BaseSettings):
     redis_host: str
     redis_port: int
 
-class LLMSettings(_BaseSettings):
+
+class LLMSettings(BaseModel):
+    """
+    Configuration for LLM client (API credentials and model selection).
+
+    Attributes:
+        api_key: API key for the LLM provider.
+        model_name: Model identifier to use for inference. Defaults to gemini-2.0-flash.
+    """
     api_key: str
     model_name: str = "gemini-2.0-flash"
+
+
+class AdapterSettings(_BaseSettings):
+    """
+    Configuration for the bot adapter (authentication settings).
+
+    Attributes:
+        bot_token: Authentication token for the bot platform (e.g. Telegram).
+    """
+    bot_token: str

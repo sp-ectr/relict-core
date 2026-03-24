@@ -1,5 +1,9 @@
 """
-Logger setup.
+Logging configuration and error-handling decorator for the Relict engine.
+
+Provides:
+- setup_logging(): configures console and rotating file handlers via environment variables.
+- log_error(): decorator for automatic exception logging on both sync and async functions.
 """
 import asyncio
 import logging
@@ -34,12 +38,12 @@ def setup_logging() -> None:
         "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
     )
 
-    consol_handler = logging.StreamHandler()
-    consol_handler.setLevel(
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(
         logging.INFO if log_level_name != "DEBUG" else logging.DEBUG
     )
-    consol_handler.setFormatter(formatter)
-    root_logger.addHandler(consol_handler)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
 
     if log_file:
         try:
