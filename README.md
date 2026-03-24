@@ -1,37 +1,50 @@
-#  Relict Core
+# Relict Core
 
-**An asynchronous Python framework for simulating proactive AI entities with configurable personalities and motivations.**
+Async Python framework for building stateful LLM agents with configurable behavior and personality.
 
-`relict-core` is a micro-framework for building the engine behind stateful, agentic AI characters. It provides the architectural foundation to create personalities that don't just *react* to users, but *live* alongside them, driven by their own internal goals and a unique "rhythm of life".
+`relict-core` is a micro-framework for running stateful LLM agents. It provides a runtime for long-running entities that can process messages and execute scheduled actions using an internal cycle.
 
-## Manifesto — The Philosophy
+## Architecture
 
-Traditional chatbots are reactive puppets. `relict-core` is designed to build proactive **agents**. An entity built with Relict has its own will, driven by three core principles:
+Relict is based on a simple event-driven model where behavior is defined by configuration and internal state.
 
-1.  **Agency over Reactivity:** The entity is proactive. It can initiate conversations and act on its own schedule, creating the illusion of a separate, thinking consciousness.
-2.  **Motivation over Service:** The entity's behavior is dictated by a configurable set of rules and a core goal (e.g., a `personality.json`). Its internal state (e.g., "relationship score") is a metric of its own evaluation, not user satisfaction.
-3.  **Engine vs. Configuration:** The Core is a faceless engine. The "soul" of the character—its personality, rules, and goals—is injected entirely through configuration, allowing developers to create vastly different entities without altering the core logic.
+### 1. Agency over reactivity
+The system runs on an internal cycle (pulse) and can execute actions without external input.
+
+### 2. Behavior via configuration
+Agent behavior is defined by a configuration file or schema (`PersonalityManifest`).
+Internal state (e.g. relationship score) influences decisions.
+
+### 3. Engine/config separation
+The core runtime is generic. All behavior is defined externally via configuration.
 
 ## Key Features
 
--   ** Proactive Agency:** Powered by a `PulsePlanner`, entities have their own "heartbeat," allowing them to act independently on a life-like, non-deterministic schedule.
--   ** Configurable Motivation System:** The core of each personality is defined in a configuration file, dictating how its internal state changes based on user interactions. This dynamically alters the entity's behavior, tone, and decisions.
--   ** Long-Term Memory:** Entities persist key facts and interactions in a PostgreSQL database, allowing them to reference past events across days or weeks.
--   **Resilient SAGA Architecture:** Inspired by microservices, the engine is composed of independent, stateless workers communicating via Redis Streams. This ensures high availability and fault tolerance.
--   ** Pluggable Layers:** Built with dependency injection, allowing developers to easily swap out LLM providers or databases.
+- **Scheduled execution (Pulse cycle):** agents can act on their own schedule
+- **Config-driven behavior:** personality and rules defined via configuration
+- **Long-term memory:** state stored in PostgreSQL
+- **Event-driven workers:** Redis Streams-based processing model
+- **Pluggable integrations:** dependency injection for LLMs and storage
 
-## Architectural Principles
+## Architecture
 
--   **Separation of Concerns:** Clear boundaries between `Workers` (business logic), `Drivers` (external services), and `Databases`.
--   **Event-Driven Communication:** All components are decoupled and communicate asynchronously via Redis Streams (Choreography-based SAGA).
--   **Fail Fast & Resilience:** Each worker runs as an independent process. A critical error will crash a single worker, which can be automatically restarted, while the rest of the system remains operational.
--   **Dependency Injection:** Dependencies are explicitly injected, making components highly testable and configurable.
+- Workers: stateless event processors
+- Redis Streams: message transport
+- PostgreSQL: persistence
+- Drivers: external integrations
 
-## Technology Stack
+## Principles
 
--   **`Python 3.12+`** 
--   **`Pydantic V2`** 
--   **`PostgreSQL`** 
--   **`Redis`** 
--   **`APScheduler`** 
--   **`Docker & Docker Compose`** 
+- Separation of concerns between workers, drivers, and storage
+- Async event-driven communication via Redis Streams
+- Fault isolation per worker process
+- Explicit dependency injection
+
+## Tech Stack
+
+- Python 3.12+
+- Pydantic v2
+- PostgreSQL
+- Redis
+- APScheduler
+- Docker / Docker Compose
