@@ -82,7 +82,7 @@ class BrainWorker:
 
         async with self.db.lifecycle(), self.redis.lifecycle():
             logger.info(f"{self.worker_opts.consumer_name} connected to PostgreSQL and Redis")
-            await self.redis.stream_create_group(self.main_stream)
+            await self.redis.stream_create_group(self.main_stream, mk_stream=True)
             logger.info(f"{self.worker_opts.consumer_name} is started. Listening for {self.main_stream.stream}...")
             while self.is_running:
                 try:
