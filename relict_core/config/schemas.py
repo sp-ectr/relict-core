@@ -349,8 +349,10 @@ class PersonalityManifest(BaseModel):
                     "Not every pulse requires a response — use judgment."
     )
     relationship_rules: str = Field(
-        description="How to manage relationship scores 0-100. "
-                    "Score 0 = permanent ignore. Score 100 = maximum trust."
+        description="How to evaluate relationships (0-100 scale, where 0=ignore, 100=trust). "
+                    "CRITICAL: You MUST output ONLY the CHANGE (delta) in score, NOT the absolute value. "
+                    "Deltas should be between -20 and +20 per pulse. "
+                    "Example: return 10 for a wise thought, -15 for an insult."
     )
     memories_behavior: str = Field(
         description="How to form memories. Max 10 per participant, oldest auto-deleted. Be selective. "
@@ -364,14 +366,13 @@ class PersonalityManifest(BaseModel):
             "ALWAYS respond with valid JSON matching this schema exactly. "
             "NEVER add text outside JSON. NEVER wrap in markdown.\n"
             '{"text_reply": "str or null", '
-            '"new_memories": {"user_id": "memory"} or null, '
+            '"new_memories": {"user_id": "memory string"} or null, '
             '"respect_updates": {"user_id": integer_delta} or null, '
             '"new_participants": {"user_id": {"custom_name": "str"}} or null, '
             '"set_block": [user_id] or null}\n\n'
-            "MEMORY RULES: Write memories in English only. "
-            "Max 5 words per memory. Facts only, no sentences. "
-            "Good: 'likes philosophy, reads'. Bad: 'Artem enjoys reading and is interested in philosophy'.\n"
-            "NEW PARTICIPANTS RULES: custom_name in English only. Short, max 2 words."
+            "MEMORY RULES: Write in English. Max 5 words. Facts only (e.g., 'likes philosophy, reads').\n"
+            "PARTICIPANT RULES: custom_name in English only. Max 2 words.\n"
+            "RESPECT RULES: respect_updates MUST be a positive or negative integer representing the change (e.g., 5, -10), NEVER the absolute score."
         )
     )
 
