@@ -71,7 +71,7 @@ class RedisSettings(_BaseSettings):
     redis_port: int
 
 
-class LLMSettings(BaseModel):
+class LLMSettings(_BaseSettings):
     """
     Configuration for LLM client (API credentials and model selection).
 
