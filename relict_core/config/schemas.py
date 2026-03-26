@@ -221,7 +221,7 @@ class WorkerIdentity(BaseModel):
         consumer_name: Derived consumer identifier in the format '<worker_name>_<index>'.
             Used when registering the worker as a consumer in a Redis stream group.
     """
-    worker_name: Literal["operator", "scheduler", "brain_worker"]
+    worker_name: Literal["operator", "scheduler", "brain_worker", "response_worker"]
     index: int
 
     @property
