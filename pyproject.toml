@@ -16,7 +16,7 @@ dependencies = [
     "pydantic-settings",
     "redis>=5.0",
     "asyncpg",
-    "apscheduler",
+    "apscheduler>=4.0.0a1",
     "google-genai",
     "aiogram>=3.0"
 ]
