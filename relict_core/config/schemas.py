@@ -117,9 +117,9 @@ class RedisKey(BaseModel):
     """
     key: str = Field(
         ...,
-        pattern=r"^(silence_lock:\d+"
-                r"|silence_counter:\d+"
-                r"|rate_limit_user:\d+)$"
+        pattern=r"^(silence_lock:-?\d+"
+                r"|silence_counter:-?\d+"
+                r"|rate_limit_user:-?\d+)$"
     )
 
     @classmethod

@@ -36,12 +36,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_bot_configs_updated_at
+CREATE OR REPLACE TRIGGER update_bot_configs_updated_at
 BEFORE UPDATE ON bot_configs
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_participants_updated_at
+CREATE OR REPLACE TRIGGER update_participants_updated_at
 BEFORE UPDATE ON participants
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();

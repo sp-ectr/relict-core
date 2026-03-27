@@ -10,6 +10,7 @@ from asyncpg import Pool
 from asyncpg import exceptions as error_database
 from contextlib import asynccontextmanager
 from typing import Any
+from pathlib import Path
 
 import relict_core.config.sql_queries as queries
 from relict_core.config.exceptions import (DatabaseConnectionError,
@@ -294,6 +295,30 @@ class AsyncPostgreManager:
             query=queries.UPDATE_PARTICIPANT_MEMORY,
             params=(participant_id, memory_summary)
         ))
+
+    async def init_tables(self) -> None:
+        """
+        Idempotently initializes the database schema from the embedded schema.sql file.
+        This method is called automatically on pool creation.
+        """
+        current_dir = Path(__file__).parent
+        schema_path = current_dir / "schema.sql"
+
+        if not schema_path.exists():
+            logger.critical(f"FATAL: schema.sql not found at {schema_path}!")
+            raise FileNotFoundError(f"schema.sql not found at {schema_path}")
+
+        with open(schema_path, "r", encoding="utf-8") as f:
+            sql_script = f.read()
+
+        logger.debug("Initializing database schema...")
+        try:
+            async with self._pool_acquire() as conn:
+                await conn.execute(sql_script)
+            logger.info("Database schema initialized successfully (or already exists).")
+        except Exception as e:
+            logger.error(f"Failed to initialize database tables: {e}")
+            raise DatabaseConnectionError("Failed to initialize database tables") from e
 
     @staticmethod
     def _record_to_dict(record: asyncpg.Record | None) -> dict[str, Any] | None:
