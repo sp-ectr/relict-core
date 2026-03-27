@@ -117,9 +117,7 @@ class RedisKey(BaseModel):
     """
     key: str = Field(
         ...,
-        pattern=r"^(silence_lock:-?\d+"
-                r"|silence_counter:-?\d+"
-                r"|rate_limit_user:-?\d+)$"
+        pattern=r"^(silence_lock|silence_counter|rate_limit_user|messages_stream):[a-zA-Z0-9_-]+$"
     )
 
     @classmethod
@@ -133,6 +131,10 @@ class RedisKey(BaseModel):
     @classmethod
     def rate_limit(cls, user_id: int) -> "RedisKey":
         return cls(key=f"rate_limit_user:{user_id}")
+
+    @classmethod
+    def messages_stream(cls, config_id: int) -> "RedisKey":
+        return cls(key=f"messages_stream:{config_id}")
 
 
 class RedisData(BaseModel, Generic[T]):
@@ -152,8 +154,8 @@ class RedisData(BaseModel, Generic[T]):
     """
     key: str = Field(
         ...,
-        pattern=r"^(bot_config:\d+"
-                r"|participant_config:\d+:\d+)$"
+        pattern=r"^(bot_config:[a-zA-Z0-9_-]+"
+                r"|participant_config:[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+)$"
     )
     model: type[T]
 
@@ -178,7 +180,7 @@ class StreamContext(BaseModel):
         consumer: Consumer identifier within the group.
     """
     stream: str = Field(..., pattern=r"^(raw_messages"
-                                     r"|messages_stream:\d+"
+                                     r"|messages_stream:[a-zA-Z0-9_-]+"
                                      r"|system_stream"
                                      r"|session_stream:shard_\d+"
                                      r"|brain_stream)|$")

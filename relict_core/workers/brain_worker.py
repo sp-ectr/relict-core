@@ -208,11 +208,9 @@ class BrainWorker:
         keys_to_delete = [
             RedisKey.silence_lock(event.config_id),
             RedisKey.silence_counter(event.config_id),
+            RedisKey.messages_stream(event.config_id),
             RedisData.bot_config(event.config_id)
         ]
-
-        messages_stream_key = RedisKey(key=f"messages_stream:{event.config_id}")
-        keys_to_delete.append(messages_stream_key)
 
         await self.redis.delete_many(keys_to_delete)
         logger.debug(f"Redis keys and streams deleted for config_id={event.config_id}")
