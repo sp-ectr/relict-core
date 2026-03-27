@@ -183,7 +183,7 @@ class StreamContext(BaseModel):
                                      r"|messages_stream:[a-zA-Z0-9_-]+"
                                      r"|system_stream"
                                      r"|session_stream:shard_\d+"
-                                     r"|brain_stream)|$")
+                                     r"|brain_stream)$")
     group: Literal["test", "operators", "schedulers", "brain_workers", "response_workers"]
     consumer: str = Field(default="consumer_0", pattern=r"^consumer_\d|operator_\d+|scheduler_\d+|brain_worker_\d+|response_worker_\d+$")
 
