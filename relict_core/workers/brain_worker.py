@@ -235,9 +235,9 @@ class BrainWorker:
         silence_lock_key = RedisKey.silence_lock(config_id)
         stream = StreamContext.message_stream(config_id, self.worker_opts.consumer_name)
 
-        await self.redis.stream_create_group(stream)
+        await self.redis.stream_create_group(stream, mk_stream=True)
 
-        messages = await self.redis.stream_read_data(stream, count=30)
+        messages = await self.redis.stream_read_data(stream, count=30, block_ms=0)
 
         if not messages:
             if await self.redis.has_key(silence_counter_key):
