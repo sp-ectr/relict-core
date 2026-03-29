@@ -70,8 +70,8 @@ class SessionWorker:
                     if not result:
                         continue
 
-                    try:
-                        for data in result:
+                    for data in result:
+                        try:
                             if data.error:
                                 raise SchedulerError(
                                     f"Error while processing a key event for the system. {data.data_id}:{data.payload}")
@@ -86,8 +86,8 @@ class SessionWorker:
                                     await self._handle_clean(event)
                                 case _:
                                     logger.warning(f"Unexpected event type: {raw_event_type}")
-                    finally:
-                        await self.redis.stream_ack(self.main_stream, data.data_id)
+                        finally:
+                            await self.redis.stream_ack(self.main_stream, data.data_id)
                 except StreamError as e:
                     raise SchedulerError(f"Stream logic failed: {e}")
                 except Exception as e:
@@ -245,4 +245,3 @@ class SessionWorker:
             self.is_running = False
         else:
             logger.debug(f"{self.worker_opts.consumer_name} already stopped or not started")
-

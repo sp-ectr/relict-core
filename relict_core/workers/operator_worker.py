@@ -62,7 +62,6 @@ class OperatorWorker:
                         try:
                             if data.error:
                                 continue
-
                             raw_event_type = data.payload.get("event_type")
                             match raw_event_type:
                                 case "RawMessage":
@@ -70,13 +69,10 @@ class OperatorWorker:
                                     await self._handle_message(event)
                                 case _:
                                     logger.warning(f"Unexpected event type: {raw_event_type}")
-
                         finally:
                             await self.redis.stream_ack(self.main_stream, data.data_id)
-
                 except Exception as e:
                     raise OperatorError(f"Critical error in OperatorWorker loop: {e}") from e
-
         logger.info(f"{self.worker_opts.consumer_name} gracefully stopped")
 
     async def _handle_message(self, event: RawMessage):
