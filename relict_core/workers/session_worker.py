@@ -60,6 +60,7 @@ class SessionWorker:
         self.scheduler = AsyncScheduler()
 
         async with self.scheduler, self.db.lifecycle(), self.redis.lifecycle():
+            await self.scheduler.start_in_background()
             logger.info(f"{self.worker_opts.consumer_name} connected to PostgreSQL and Redis")
             await self.redis.stream_create_group(self.main_stream, mk_stream=True)
             logger.info(f"{self.worker_opts.consumer_name} is started. Listening for {self.main_stream.stream}...")
@@ -151,6 +152,13 @@ class SessionWorker:
             await self._remove_jobs_for_config(event.config_id)
             raise SchedulerError(f"Failed to schedule jobs for config {event.config_id}: {e}")
 
+    async def _safe_stream_add(self, data, opts):
+        try:
+            await self.redis.stream_add(data, opts)
+            logger.info(f"Pulse sent to stream {opts.stream}")
+        except Exception as e:
+            logger.error(f"Failed to send pulse to stream: {e}", exc_info=True)
+
     async def _handle_day_start(self, command: CommandDayStart, now: datetime | None = None):
         logger.debug(f"Handling СommandDayStart for config_id={command.config_id}. Planning pulses...")
         try:
@@ -169,7 +177,7 @@ class SessionWorker:
                     is_last_of_slot=pulse.is_last_of_slot
                 )
                 await self.scheduler.add_schedule(
-                    self.redis.stream_add,
+                    self._safe_stream_add,
                     trigger=DateTrigger(pulse.timestamp),
                     kwargs={
                         "data": pulse_command,
@@ -181,8 +189,7 @@ class SessionWorker:
             logger.info(f"Scheduled {len(pulses)} pulses for config_id={command.config_id}.")
         except ZoneInfoNotFoundError:
             await self._remove_pulse_for_config(command.config_id)
-            raise SchedulerError(
-                f"Invalid timezone for config_id={command.config_id}.")
+            raise SchedulerError(f"Invalid timezone for config_id={command.config_id}.")
         except Exception as e:
             await self._remove_pulse_for_config(command.config_id)
             raise SchedulerError(f"Failed to plan pulses for config_id={command.config_id}: {e}")
