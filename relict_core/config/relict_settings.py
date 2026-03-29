@@ -77,10 +77,10 @@ class LLMSettings(_BaseSettings):
 
     Attributes:
         api_key: API key for the LLM provider.
-        model_name: Model identifier to use for inference. Defaults to gemini-2.0-flash.
+        model_name: Model identifier to use for inference. Defaults to gemini-2.5-flash.
     """
     api_key: str
-    model_name: str = "gemini-2.0-flash"
+    model_name: str = "gemini-2.5-flash"
 
 
 class AdapterSettings(_BaseSettings):
