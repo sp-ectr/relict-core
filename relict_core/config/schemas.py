@@ -66,7 +66,7 @@ class Participant(BaseModel):
         config_id: ID of the bot configuration the participant is associated with; indexed for faster lookup.
         user_id: Unique identifier of the participant from an external source (e.g., Telegram via aiogram);
             indexed together with config_id.
-        custom_name: Name remembered or assigned by the bot, or the name the participant provided.
+        user_name: Name remembered or assigned by the bot, or the name the participant provided.
         relationship_score: Bot's perception of the participant, used to influence responses.
             Default is 50. Bot adjusts up or down based on interactions.
         is_ignored: If True, the bot silently drops all messages from this participant.
@@ -75,7 +75,7 @@ class Participant(BaseModel):
     """
     config_id: int
     user_id: int
-    custom_name: str
+    user_name: str
     relationship_score: int = 50
     is_ignored: bool = False
     last_interaction_at: datetime | None = None
@@ -94,7 +94,7 @@ class ParticipantInfo(BaseModel):
         memories: Long-term memories associated with this participant. None if none exist.
     """
     user_id: int
-    custom_name: str
+    custom_name: str | None = None
     relationship_score: int
     memories: list[str] | None = None
 
@@ -185,7 +185,8 @@ class StreamContext(BaseModel):
                                      r"|session_stream:shard_\d+"
                                      r"|brain_stream)$")
     group: Literal["test", "operators", "schedulers", "brain_workers", "response_workers"]
-    consumer: str = Field(default="consumer_0", pattern=r"^consumer_\d|operator_\d+|scheduler_\d+|brain_worker_\d+|response_worker_\d+$")
+    consumer: str = Field(default="consumer_0",
+                          pattern=r"^consumer_\d|operator_\d+|scheduler_\d+|brain_worker_\d+|response_worker_\d+$")
 
     @classmethod
     def raw_messages(cls, consumer: str) -> "StreamContext":
@@ -206,6 +207,7 @@ class StreamContext(BaseModel):
     @classmethod
     def brain_stream(cls, consumer: str) -> "StreamContext":
         return cls(stream="brain_stream", group="response_workers", consumer=consumer)
+
 
 class WorkerIdentity(BaseModel):
     """
@@ -335,48 +337,33 @@ class PersonalityManifest(BaseModel):
     when the LLM session opens. Never sent again — model holds it in context.
     """
     role: str = Field(
-        description="Who the bot is. Full persona: name, background, age, occupation, personality traits."
+        description="[DEV] Who the bot is."
     )
     goal: str = Field(
-        description="The primary objective. What the bot is trying to achieve in this chat long-term."
+        description="[DEV] Primary objective."
     )
     response_style: str = Field(
-        description="Communication style. Tone, vocabulary, message length, use of emoji, slang etc."
+        description="[DEV] Communication style."
     )
     pulse_behavior: str = Field(
-        description="How to behave during pulse-driven activity. "
-                    "On first pulse of slot (is_first_of_slot=True) — you just came online, "
-                    "act naturally, improvise where you've been if asked. "
-                    "On last pulse (is_last_of_slot=True) — wrap up, say goodbye in your style. "
-                    "Not every pulse requires a response — use judgment."
+        description="[DEV] Pulse behavior rules."
     )
     relationship_rules: str = Field(
-        description="How to evaluate relationships (0-100 scale, where 0=ignore, 100=trust). "
-                    "CRITICAL: You MUST output ONLY the CHANGE (delta) in score, NOT the absolute value. "
-                    "Deltas should be between -20 and +20 per pulse. "
-                    "Example: return 10 for a wise thought, -15 for an insult."
-    )
-    memories_behavior: str = Field(
-        description="How to form memories. Max 10 per participant, oldest auto-deleted. Be selective. "
-                    "ALWAYS write in English. Max 5 words per memory entry. "
-                    "Facts only, no full sentences. "
-                    "Example: 'likes philosophy, reads' not 'Artem enjoys reading and is interested in philosophy'."
-    )
-    restrictions: list[str] = Field(default_factory=list)
-    response_contract: str = Field(
         default=(
-            "ALWAYS respond with valid JSON matching this schema exactly. "
-            "NEVER add text outside JSON. NEVER wrap in markdown.\n"
-            '{"text_reply": "str or null", '
-            '"new_memories": {"user_id": "memory string"} or null, '
-            '"respect_updates": {"user_id": integer_delta} or null, '
-            '"new_participants": {"user_id": {"custom_name": "str"}} or null, '
-            '"set_block": [user_id] or null}\n\n'
-            "MEMORY RULES: Write in English. Max 5 words. Facts only (e.g., 'likes philosophy, reads').\n"
-            "PARTICIPANT RULES: custom_name in English only. Max 2 words.\n"
-            "RESPECT RULES: respect_updates MUST be a positive or negative integer representing the change (e.g., 5, -10), NEVER the absolute score."
+            "Evaluate relationships on 0-100 scale (0=ignore, 100=trust). "
+            "CRITICAL: output ONLY the CHANGE (delta), NOT absolute value. "
+            "Range: -20 to +20 per pulse. "
+            "Example: +10 for wise thought, -15 for insult."
         )
     )
+    memories_behavior: str = Field(
+        default=(
+            "Max 10 memories per participant, oldest auto-deleted. Be selective. "
+            "ALWAYS write in English. Max 5 words per entry. Facts only. "
+            "Example: 'likes philosophy, reads'."
+        )
+    )
+    restrictions: list[str] = Field(default_factory=list)
 
 
 class LLMRequest(BaseModel):
@@ -413,17 +400,22 @@ class LLMRequest(BaseModel):
                     "Format: {user_id: 'username: message text'}. "
                     "Empty dict means no new messages — decide whether to initiate or stay silent."
     )
-
     is_first_of_slot: bool = Field(
         description="True if this is the first pulse of the activity slot. "
-                    "You just came online. If asked — you can improvise where you've been. "
-                    "Act naturally, as if you just opened the app."
+                    "You just came online. Improvise where you've been if asked."
     )
     is_last_of_slot: bool = Field(
         description="True if this is the last pulse of the slot. "
-                    "You are about to go offline. Wrap up the conversation naturally, "
-                    "say goodbye in your persona's style if appropriate."
+                    "Wrap up naturally, say goodbye in your persona's style."
     )
+
+    @property
+    def engine_directives(self) -> str:
+        lines = []
+        for name, field in self.model_fields.items():
+            if field.description:
+                lines.append(f"- {name}: {field.description}")
+        return "\n".join(lines)
 
 
 class LLMResponse(BaseModel):
@@ -453,17 +445,20 @@ class LLMResponse(BaseModel):
     )
     new_memories: dict[int, str] | None = Field(
         default=None,
-        description="Long-term memories keyed by user_id. Max 10 per participant. Be selective."
+        description="Long-term memories keyed by user_id. Max 10 per participant. "
+                    "ALWAYS write in English. Max 5 words per entry. Facts only. "
+                    "Example: 'likes philosophy, reads'. dict[int, str]"
     )
     respect_updates: dict[int, int] | None = Field(
         default=None,
-        description="Relationship score changes keyed by user_id. "
-                    "Integer delta (e.g. +10, -5). Only changed scores."
+        description="Relationship score DELTA keyed by user_id. "
+                    "MUST be integer change, NOT absolute score. "
+                    "Example: +10 for wise thought, -15 for insult. Range: -20 to +20. user_id: 10 dict[int, int]"
     )
-    new_participants: dict[int, dict[str, str]] | None = Field(
+    new_participants: dict[int, str] | None = Field(
         default=None,
         description="Newly introduced participants keyed by user_id. "
-                    "Required fields: custom_name (str), gender (male/female/unknown)."
+                    "Required field: user_name str. dict[int, str]"
     )
     set_block: list[int] | None = Field(
         default=None,

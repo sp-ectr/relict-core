@@ -36,11 +36,18 @@ class GeminiClient(BaseLLMClient):
         Sends the initial prompt together with the system instruction
         (PersonalityManifest) and stores the session internally.
         """
+        system_text = (
+                system_instruction.model_dump_json() +
+                "\n\nFIELD DIRECTIVES:\n" +
+                prompt.engine_directives
+        )
+
         chat = self.client.aio.chats.create(
             model=self.model_name,
             config=GenerateContentConfig(
-                system_instruction=system_instruction.model_dump_json(),
-                response_mime_type="application/json"
+                system_instruction=system_text,
+                response_mime_type="application/json",
+                response_schema=LLMResponse,
             )
         )
 

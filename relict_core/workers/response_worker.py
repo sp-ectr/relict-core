@@ -105,13 +105,13 @@ class ResponseWorker:
                         await self.db.update_relationship_score(participant, score_delta)
 
             if content.new_participants:
-                for user_id, info in content.new_participants.items():
+                for user_id, user_name in content.new_participants.items():
                     participant = await self.db.get_participant(event.config_id, user_id)
                     if not participant:
                         new_participant = Participant(
                             config_id=event.config_id,
                             user_id=user_id,
-                            custom_name=info["custom_name"],
+                            user_name=user_name,
                         )
                         await self.db.insert_participant(new_participant)
 

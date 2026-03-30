@@ -32,20 +32,20 @@ DELETE FROM bot_configs WHERE id = $1;
 """
 
 INSERT_PARTICIPANT = """
-INSERT INTO participants (config_id, user_id, custom_name, relationship_score, memories)
+INSERT INTO participants (config_id, user_id, user_name, relationship_score, memories)
 VALUES ($1, $2, $3, $4, '{}')
 RETURNING id;
 """
 
 
 GET_PARTICIPANT = """
-SELECT id, config_id, user_id, custom_name, relationship_score, is_ignored, last_interaction_at
+SELECT config_id, user_id, user_name, relationship_score, is_ignored, last_interaction_at
 FROM participants
 WHERE config_id = $1 AND user_id = $2;
 """
 
 GET_PARTICIPANTS_WITH_MEMORIES = """
-SELECT config_id, user_id, custom_name, relationship_score, memories
+SELECT config_id, user_id, user_name, relationship_score, memories
 FROM participants
 WHERE config_id = $1 AND is_ignored = false;
 """

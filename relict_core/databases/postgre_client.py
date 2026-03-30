@@ -245,7 +245,7 @@ class AsyncPostgreManager:
         participant_id = await self._execute(
             SQLParams(
                 query=queries.INSERT_PARTICIPANT,
-                params=(participant.config_id, participant.user_id, participant.custom_name,
+                params=(participant.config_id, participant.user_id, participant.user_name,
                         participant.relationship_score),
                 mode="fetch_val"
             )
