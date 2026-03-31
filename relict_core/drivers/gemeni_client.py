@@ -41,6 +41,7 @@ RESPONSE_SCHEMA = Schema(
             nullable=True,
             description="Newly introduced participants keyed by user_id. "
                         "Required field: user_name str."
+                        "In the 'messages' list, you will see 'user_name'. If a user is not present in 'participants_info', it means they are new. Introduce yourself and use their provided 'user_name' to address them."
         ),
         "set_block": Schema(
             type=Type.ARRAY,

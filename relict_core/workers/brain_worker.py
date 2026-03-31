@@ -21,7 +21,7 @@ from relict_core.databases.postgre_client import AsyncPostgreManager
 from relict_core.config.logging_config import log_error
 from relict_core.config.events import Message, EventClean, CommandPulse, Response
 from relict_core.config.schemas import PersonalityManifest, WorkerIdentity, StreamContext, RedisKey, \
-    LLMRequest, ParticipantInfo, RedisData
+    LLMRequest, ParticipantInfo, RedisData, UserMessages
 from relict_core.config.exceptions import BrainError, StreamError
 from relict_core.drivers.gemeni_client import GeminiClient
 
@@ -220,90 +220,62 @@ class BrainWorker:
             self.produce_stream
         )
 
-    async def _handle_messages(self, config_id: int) -> dict[int, str]:
+    async def _handle_messages(self, config_id: int) -> list[UserMessages] | None:
         """
-        Reads messages from stream, validates and aggregates them.
-
-        If no messages twice in a row → sets silence lock.
-
-        Returns:
-            dict[user_id] = "username:text"
+        Reads messages from Redis, validates them, and groups them into UserMessages objects.
         """
-        result: dict[int, str] = {}
+        buffer: dict[int, dict] = {}
 
         silence_counter_key = RedisKey.silence_counter(config_id)
         silence_lock_key = RedisKey.silence_lock(config_id)
         stream = StreamContext.message_stream(config_id, self.worker_opts.consumer_name)
 
         await self.redis.stream_create_group(stream, mk_stream=True)
-
         messages = await self.redis.stream_read_data(stream, count=30, block_ms=0)
 
         if not messages:
             if await self.redis.has_key(silence_counter_key):
-                logger.warning(
-                    "Stream empty twice, locking config",
-                    extra={"config_id": config_id},
-                )
+                logger.warning(f"Stream empty twice, locking config {config_id}")
                 await self.redis.set_key(silence_lock_key)
             else:
                 await self.redis.set_key(silence_counter_key)
-            return result
+            return []
 
         for msg in messages:
-            event_type: str | None = None
+            if msg.error:
+                continue
+
+            payload = msg.payload
+            event_type = payload.get("event_type")
+
+            if event_type != "Message":
+                logger.error(f"INTEGRITY ERROR: Unexpected '{event_type}' in stream {config_id}")
+                await self.redis.stream_ack(stream, msg.data_id)
+                continue
 
             try:
-                if msg.error:
-                    logger.warning(
-                        "redis message error flag",
-                        extra={"msg_id": msg.data_id, "config_id": config_id},
-                    )
-                    continue
+                m = Message.model_validate(payload)
 
-                event_type = msg.payload.get("event_type")
+                if m.user_id not in buffer:
+                    buffer[m.user_id] = {
+                        "user_name": m.user_name,
+                        "texts": []
+                    }
 
-                if event_type != "Message":
-                    logger.warning(
-                        "unexpected event type",
-                        extra={
-                            "event_type": event_type,
-                            "msg_id": msg.data_id,
-                            "config_id": config_id,
-                        },
-                    )
-                    continue
+                buffer[m.user_id]["texts"].append(m.text)
 
-                try:
-                    message = Message.model_validate(msg.payload)
-                except ValidationError:
-                    logger.warning(
-                        "invalid message schema",
-                        extra={
-                            "msg_id": msg.data_id,
-                            "event_type": event_type,
-                            "config_id": config_id,
-                        },
-                    )
-                    continue
-
-                result[message.user_id] = f"{message.user_name}:{message.text}"
-
-            except Exception:
-                logger.critical(
-                    "unexpected processing failure — stopping worker",
-                    extra={
-                        "msg_id": msg.data_id,
-                        "event_type": event_type or "unknown",
-                        "config_id": config_id,
-                    },
-                )
-                raise BrainError(f"Critical bug in the system! Bot confit_id:{config_id}")
-
+            except ValidationError as e:
+                logger.warning(f"SCHEMA ERROR: Broken message in {msg.data_id}: {e.json()}")
             finally:
                 await self.redis.stream_ack(stream, msg.data_id)
 
-        return result
+        return [
+            UserMessages(
+                user_id=uid,
+                user_name=data["user_name"],
+                texts=data["texts"]
+            ) for uid, data in buffer.items()
+        ]
 
     def stop(self):
         """Gracefully stop the worker loop."""

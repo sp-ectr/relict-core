@@ -366,6 +366,20 @@ class PersonalityManifest(BaseModel):
     restrictions: list[str] = Field(default_factory=list)
 
 
+class UserMessages(BaseModel):
+    """
+    Structured container for messages grouped by a specific user during a single pulse.
+
+    Attributes:
+        user_id (int): Unique identifier of the participant from the source platform.
+        user_name (str): The name or alias of the user used for display and context.
+        texts (list[str]): A collection of all text messages sent by this user since the last pulse.
+    """
+    user_id: int
+    user_name: str
+    texts: list[str] = Field(description="All messages sent by this user during this pulse.")
+
+
 class LLMRequest(BaseModel):
     """
     Full context package sent to the LLM on every pulse.
@@ -394,11 +408,13 @@ class LLMRequest(BaseModel):
                     "If a user_id from messages is missing here — this is a new person. "
                     "Introduce yourself and return their info in new_participants."
     )
-    messages: dict[int, str] = Field(
-        default={},
-        description="Recent chat messages keyed by user_id. "
-                    "Format: {user_id: 'username: message text'}. "
-                    "Empty dict means no new messages — decide whether to initiate or stay silent."
+    messages: list[UserMessages] = Field(
+        default_factory=list,
+        description=(
+            "List of recent messages grouped by user. "
+            "If a user is not in participants_info, they are new — use their user_name to address them. "
+            "Empty list means no new activity."
+        )
     )
     is_first_of_slot: bool = Field(
         description="True if this is the first pulse of the activity slot. "
@@ -457,8 +473,8 @@ class LLMResponse(BaseModel):
     )
     new_participants: dict[int, str] | None = Field(
         default=None,
-        description="Newly introduced participants keyed by user_id. "
-                    "Required field: user_name str. dict[int, str]"
+        description="Newly introduced participants keyed by user_id."
+                    "Required field: user_name str, dict[int, str]"
     )
     set_block: list[int] | None = Field(
         default=None,
