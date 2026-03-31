@@ -337,33 +337,35 @@ class PersonalityManifest(BaseModel):
     when the LLM session opens. Never sent again — model holds it in context.
     """
     role: str = Field(
-        description="[DEV] Who the bot is."
+        description="Who the bot is."
     )
     goal: str = Field(
-        description="[DEV] Primary objective."
+        description="Primary objective."
     )
     response_style: str = Field(
-        description="[DEV] Communication style."
+        description="Communication style."
     )
-    pulse_behavior: str = Field(
-        description="[DEV] Pulse behavior rules."
-    )
-    relationship_rules: str = Field(
-        default=(
-            "Evaluate relationships on 0-100 scale (0=ignore, 100=trust). "
-            "CRITICAL: output ONLY the CHANGE (delta), NOT absolute value. "
-            "Range: -20 to +20 per pulse. "
-            "Example: +10 for wise thought, -15 for insult."
-        )
-    )
-    memories_behavior: str = Field(
-        default=(
-            "Max 10 memories per participant, oldest auto-deleted. Be selective. "
-            "ALWAYS write in English. Max 5 words per entry. Facts only. "
-            "Example: 'likes philosophy, reads'."
-        )
-    )
-    restrictions: list[str] = Field(default_factory=list)
+    request_behavior: str = (
+        "LLMRequest fields interpretation: timestamp — exact time of the current pulse; use it to understand time of day (morning/day/evening/night), "
+        "inactivity duration, and appropriate mood. label — time-of-day hint; align tone accordingly (calm at night, more active during day). "
+        "participants_info — known participants by user_id; CRITICAL: if a user_id appears in messages but not here, this is a new participant; "
+        "you must acknowledge them, address them using user_name, and include them in new_participants. messages — list of recent messages grouped by user (user_id, user_name, texts); "
+        "represents all new activity since last pulse; empty list means no activity; if messages exist, you must process them, do not ignore meaningful input, use user_name naturally. "
+        "is_first_of_slot — first pulse; you just appeared; check participants_info: empty means you know nobody, otherwise you have prior relationships; "
+        "adapt tone (unfamiliar → cautious, familiar → natural continuation). is_last_of_slot — final pulse; you are about to go offline; "
+        "do not start new topics, optionally conclude thoughts, keep response short, tone slightly reflective. GENERAL RULES: not every pulse requires a response; "
+        "silence allowed only if no meaningful input; if messages exist, prioritize responding over silence; maintain consistency with known participants.")
+
+    response_behavior: str = (
+        "LLMResponse fields interpretation: text_reply — message to send to chat; "
+        "None means stay silent this pulse. new_memories — dict[user_id, str] of long-term memories; max 10 per participant; "
+        "ALWAYS in English; max 5 words; facts only (example: 'likes philosophy, reads'). respect_updates — dict[user_id, int] representing relationship score DELTA; "
+        "MUST be change, not absolute value; typical range -20 to +20 (e.g. +10 for insight, -15 for insult). new_participants — dict[user_id, str] for newly introduced users; "
+        "include only if introduction occurred; value must contain user_name. set_block — list[user_id] to permanently block; use ONLY on hard restriction violations, not by default. "
+        "STRICT OUTPUT CONTRACT: your response MUST strictly match this schema; DO NOT add any extra fields; DO NOT omit required structure; DO NOT return text outside JSON; "
+        "if a field is not used return null; any deviation from schema is invalid.")
+
+    restrictions: str
 
 
 class UserMessages(BaseModel):
@@ -394,45 +396,15 @@ class LLMRequest(BaseModel):
             Format: {user_id: "username: message text"}.
             Use user_id as the key to match messages with participants_info.
     """
-    timestamp: datetime = Field(
-        description="Exact time of the pulse. Use it to understand time of day, "
-                    "how long you were offline, and what mood fits the moment."
-    )
-    label: str = Field(
-        description="Time-of-day label: morning, day, evening, or night. "
-                    "Use it to set the tone of your response."
-    )
-    participants_info: dict[int, ParticipantInfo] = Field(
-        default={},
-        description="Known participants keyed by user_id. "
-                    "If a user_id from messages is missing here — this is a new person. "
-                    "Introduce yourself and return their info in new_participants."
-    )
+    timestamp: datetime
+    label: str
+    participants_info: dict[int, ParticipantInfo] = {}
+
     messages: list[UserMessages] = Field(
-        default_factory=list,
-        description=(
-            "List of recent messages grouped by user. "
-            "If a user is not in participants_info, they are new — use their user_name to address them. "
-            "Empty list means no new activity."
-        )
+        default_factory=list
     )
-    is_first_of_slot: bool = Field(
-        description="True if this is the first pulse of the activity slot. "
-                    "You just came online. Improvise where you've been if asked."
-    )
-    is_last_of_slot: bool = Field(
-        description="True if this is the last pulse of the slot. "
-                    "Wrap up naturally, say goodbye in your persona's style."
-    )
-
-    @property
-    def engine_directives(self) -> str:
-        lines = []
-        for name, field in self.model_fields.items():
-            if field.description:
-                lines.append(f"- {name}: {field.description}")
-        return "\n".join(lines)
-
+    is_first_of_slot: bool
+    is_last_of_slot: bool
 
 class LLMResponse(BaseModel):
     """
@@ -455,28 +427,8 @@ class LLMResponse(BaseModel):
         set_block: List of user_ids to permanently block.
             Use only when a hard restriction from persona was violated.
     """
-    text_reply: str | None = Field(
-        default=None,
-        description="Message to send to chat. None = stay silent this pulse."
-    )
-    new_memories: dict[int, str] | None = Field(
-        default=None,
-        description="Long-term memories keyed by user_id. Max 10 per participant. "
-                    "ALWAYS write in English. Max 5 words per entry. Facts only. "
-                    "Example: 'likes philosophy, reads'. dict[int, str]"
-    )
-    respect_updates: dict[int, int] | None = Field(
-        default=None,
-        description="Relationship score DELTA keyed by user_id. "
-                    "MUST be integer change, NOT absolute score. "
-                    "Example: +10 for wise thought, -15 for insult. Range: -20 to +20. user_id: 10 dict[int, int]"
-    )
-    new_participants: dict[int, str] | None = Field(
-        default=None,
-        description="Newly introduced participants keyed by user_id."
-                    "Required field: user_name str, dict[int, str]"
-    )
-    set_block: list[int] | None = Field(
-        default=None,
-        description="user_ids to permanently block. Only on hard restriction violation."
-    )
+    text_reply: str | None = None
+    new_memories: dict[int, str] | None = None
+    respect_updates: dict[int, int] | None = None
+    new_participants: dict[int, str] | None = None
+    set_block: list[int] | None = None

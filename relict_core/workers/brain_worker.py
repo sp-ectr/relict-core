@@ -178,6 +178,9 @@ class BrainWorker:
                 }
 
                 llm_response = await self.llm.start_session(event.config_id, self.persona, llm_request)
+                logger.debug(f"--- BRAIN OUTPUT (config_id={event.config_id}) ---\n"
+                             f"{llm_response.model_dump_json(indent=2)}\n"
+                             "-----------------")
 
             await self.redis.stream_add(
                 Response(config_id=event.config_id, content=llm_response, trace_id=event.trace_id),
