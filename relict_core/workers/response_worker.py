@@ -78,35 +78,56 @@ class ResponseWorker:
 
     async def _handle_response(self, event: Response):
         try:
+            logger.debug(f"[START] handle_response config_id={event.config_id}")
+
             config = await self.db.get_bot_config_by_id(event.config_id)
             if not config:
-                logger.warning(f"No config found for config_id={event.config_id}, skipping response.")
+                logger.warning(f"[CONFIG] NOT FOUND config_id={event.config_id} -> skip")
                 return
+            logger.debug(f"[CONFIG] OK config_id={event.config_id} chat_id={config.chat_id}")
 
             content = event.content
 
             if content.text_reply:
+                logger.debug(f"[TEXT] TRY SEND chat_id={config.chat_id}")
                 await self.bot.send_typing(config.chat_id)
                 await self.bot.send_message(config.chat_id, content.text_reply)
-                logger.debug(f"Response sent to chat_id={config.chat_id} for config_id={event.config_id}")
+                logger.debug(f"[TEXT] SUCCESS chat_id={config.chat_id}")
             else:
-                logger.debug(f"LLM chose silence for config_id={event.config_id}.")
+                logger.debug(f"[TEXT] SKIP (empty) config_id={event.config_id}")
+
 
             if content.new_memories:
                 for user_id, memory in content.new_memories.items():
+                    logger.debug(f"[MEMORY] TRY ADD user_id={user_id}")
                     participant = await self.db.get_participant(event.config_id, user_id)
+
                     if participant:
                         await self.db.add_long_term_memory(participant.id, memory)
+                        logger.debug(f"[MEMORY] SUCCESS user_id={user_id} participant_id={participant.id}")
+                    else:
+                        logger.debug(f"[MEMORY] SKIP user_id={user_id} (no participant)")
+            else:
+                logger.debug(f"[MEMORY] SKIP (no new_memories)")
 
             if content.respect_updates:
                 for user_id, score_delta in content.respect_updates.items():
+                    logger.debug(f"[RESPECT] TRY UPDATE user_id={user_id} delta={score_delta}")
                     participant = await self.db.get_participant(event.config_id, user_id)
+
                     if participant:
                         await self.db.update_relationship_score(participant, score_delta)
+                        logger.debug(f"[RESPECT] SUCCESS user_id={user_id} new_delta={score_delta}")
+                    else:
+                        logger.debug(f"[RESPECT] SKIP user_id={user_id} (no participant)")
+            else:
+                logger.debug(f"[RESPECT] SKIP (no updates)")
 
             if content.new_participants:
                 for user_id, user_name in content.new_participants.items():
+                    logger.debug(f"[PARTICIPANT] TRY ADD user_id={user_id} name={user_name}")
                     participant = await self.db.get_participant(event.config_id, user_id)
+
                     if not participant:
                         new_participant = Participant(
                             config_id=event.config_id,
@@ -114,17 +135,29 @@ class ResponseWorker:
                             user_name=user_name,
                         )
                         await self.db.insert_participant(new_participant)
+                        logger.debug(f"[PARTICIPANT] SUCCESS user_id={user_id}")
+                    else:
+                        logger.debug(f"[PARTICIPANT] SKIP user_id={user_id} (already exists)")
+            else:
+                logger.debug(f"[PARTICIPANT] SKIP (no new participants)")
 
             if content.set_block:
                 for user_id in content.set_block:
+                    logger.debug(f"[BLOCK] TRY SET user_id={user_id}")
                     participant = await self.db.get_participant(event.config_id, user_id)
+
                     if participant:
                         await self.db.set_ignore_status(participant.id, True)
+                        logger.debug(f"[BLOCK] SUCCESS user_id={user_id}")
+                    else:
+                        logger.debug(f"[BLOCK] SKIP user_id={user_id} (no participant)")
+            else:
+                logger.debug(f"[BLOCK] SKIP (no users)")
 
-        except AdapterError as e:
-            logger.error(f"Failed to deliver response for config_id={event.config_id}: {e}")
+            logger.debug(f"[END] handle_response config_id={event.config_id}")
+
         except Exception as e:
-            raise AdapterError(f"Critical error in _handle_response for config_id={event.config_id}: {e}") from e
+            logger.exception(f"[ERROR] handle_response config_id={event.config_id}: {e}")
 
     async def _handle_clean(self, event: EventClean) -> None:
         """

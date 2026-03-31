@@ -17,37 +17,27 @@ from relict_core.config.schemas import PersonalityManifest, LLMRequest, LLMRespo
 RESPONSE_SCHEMA = Schema(
     type=Type.OBJECT,
     properties={
-        "text_reply": Schema(
-            type=Type.STRING,
-            nullable=True,
-            description="Message to send to chat. None = stay silent this pulse."
-        ),
+        "text_reply": Schema(type=Type.STRING, nullable=True),
         "new_memories": Schema(
             type=Type.OBJECT,
             nullable=True,
-            description="Long-term memories keyed by user_id. Max 10 per participant. "
-                        "ALWAYS write in English. Max 5 words per entry. Facts only. "
-                        "Example: 'likes philosophy, reads'."
+            description="Keyed by user_id string, value is memory text string."
         ),
         "respect_updates": Schema(
             type=Type.OBJECT,
             nullable=True,
-            description="Relationship score DELTA keyed by user_id. "
-                        "MUST be integer change, NOT absolute score. "
-                        "Example: +10 for wise thought, -15 for insult. Range: -20 to +20."
+            description="Keyed by user_id string, value is integer delta."
         ),
         "new_participants": Schema(
             type=Type.OBJECT,
             nullable=True,
-            description="Newly introduced participants keyed by user_id. "
-                        "Required field: user_name str."
-                        "In the 'messages' list, you will see 'user_name'. If a user is not present in 'participants_info', it means they are new. Introduce yourself and use their provided 'user_name' to address them."
+            description="Keyed by user_id string, value is user name string.CRITICAL RULE: If a user_id appears in 'messages' but is NOT in 'participants_info', "
+                        "you MUST add them to 'new_participants' with their user_name. This is the ONLY way I can remember them."
         ),
         "set_block": Schema(
             type=Type.ARRAY,
-            nullable=True,
             items=Schema(type=Type.INTEGER),
-            description="user_ids to permanently block. Only on hard restriction violation."
+            nullable=True
         ),
     }
 )
