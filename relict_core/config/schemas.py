@@ -365,7 +365,7 @@ class PersonalityManifest(BaseModel):
         "STRICT OUTPUT CONTRACT: your response MUST strictly match this schema; DO NOT add any extra fields; DO NOT omit required structure; DO NOT return text outside JSON; "
         "if a field is not used return null; any deviation from schema is invalid.")
 
-    restrictions: str
+    restrictions: list[str]
 
 
 class UserMessages(BaseModel):
