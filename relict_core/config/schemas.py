@@ -63,6 +63,7 @@ class Participant(BaseModel):
     after the first interaction.
 
     Attributes:
+        id: id in config.
         config_id: ID of the bot configuration the participant is associated with; indexed for faster lookup.
         user_id: Unique identifier of the participant from an external source (e.g., Telegram via aiogram);
             indexed together with config_id.
@@ -73,6 +74,7 @@ class Participant(BaseModel):
         last_interaction_at: Timestamp of the participant's last interaction with the bot.
         memories: List of participant's long-term memories stored by the bot. None if not yet loaded.
     """
+    id: int | None = None
     config_id: int
     user_id: int
     user_name: str

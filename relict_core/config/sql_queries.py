@@ -39,7 +39,7 @@ RETURNING id;
 
 
 GET_PARTICIPANT = """
-SELECT config_id, user_id, user_name, relationship_score, is_ignored, last_interaction_at
+SELECT id, config_id, user_id, user_name, relationship_score, is_ignored, last_interaction_at
 FROM participants
 WHERE config_id = $1 AND user_id = $2;
 """
