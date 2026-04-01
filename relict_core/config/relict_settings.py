@@ -80,7 +80,7 @@ class LLMSettings(_BaseSettings):
         model_name: Model identifier to use for inference. Defaults to gemini-2.5-flash.
     """
     api_key: str
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = "gemini-3.1-flash-lite-preview"
 
 
 class AdapterSettings(_BaseSettings):
