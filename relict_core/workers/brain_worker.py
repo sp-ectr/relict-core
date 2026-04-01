@@ -160,28 +160,24 @@ class BrainWorker:
             is_first_of_slot=event.is_first_of_slot,
             is_last_of_slot=event.is_last_of_slot
         )
-
+        if messages:
+            users_ids = [m.user_id for m in messages]
+            participant_list = await self.db.get_participants_with_memories(event.config_id, users_ids)
+            llm_request.participants_info = {
+                p.user_id: ParticipantInfo(
+                    user_id=p.user_id,
+                    user_name=p.user_name,
+                    relationship_score=p.relationship_score,
+                    memories=p.memories
+                )
+                for p in (participant_list or [])
+            }
         try:
             if event.config_id in self.llm.sessions:
                 llm_response = await self.llm.send_in_session(event.config_id, llm_request)
             else:
-                participant_list = await self.db.get_all_participants_with_memories(event.config_id)
-
-                llm_request.participants_info = {
-                    p.user_id: ParticipantInfo(
-                        user_id=p.user_id,
-                        custom_name=p.custom_name,
-                        relationship_score=p.relationship_score,
-                        memories=p.memories
-                    )
-                    for p in (participant_list or [])
-                }
-
                 llm_response = await self.llm.start_session(event.config_id, self.persona, llm_request)
-                logger.debug(f"--- BRAIN OUTPUT (config_id={event.config_id}) ---\n"
-                             f"{llm_response.model_dump_json(indent=2)}\n"
-                             "-----------------")
-
+            logger.debug(f"--- BRAIN OUTPUT ---\n{llm_response.model_dump_json(indent=2)}")
             await self.redis.stream_add(
                 Response(config_id=event.config_id, content=llm_response, trace_id=event.trace_id),
                 self.produce_stream

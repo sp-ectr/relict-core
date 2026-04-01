@@ -123,24 +123,6 @@ class ResponseWorker:
             else:
                 logger.debug(f"[RESPECT] SKIP (no updates)")
 
-            if content.new_participants:
-                for user_id, user_name in content.new_participants.items():
-                    logger.debug(f"[PARTICIPANT] TRY ADD user_id={user_id} name={user_name}")
-                    participant = await self.db.get_participant(event.config_id, user_id)
-
-                    if not participant:
-                        new_participant = Participant(
-                            config_id=event.config_id,
-                            user_id=user_id,
-                            user_name=user_name,
-                        )
-                        await self.db.insert_participant(new_participant)
-                        logger.debug(f"[PARTICIPANT] SUCCESS user_id={user_id}")
-                    else:
-                        logger.debug(f"[PARTICIPANT] SKIP user_id={user_id} (already exists)")
-            else:
-                logger.debug(f"[PARTICIPANT] SKIP (no new participants)")
-
             if content.set_block:
                 for user_id in content.set_block:
                     logger.debug(f"[BLOCK] TRY SET user_id={user_id}")

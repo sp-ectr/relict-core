@@ -89,12 +89,12 @@ class ParticipantInfo(BaseModel):
 
     Attributes:
         user_id: Platform-specific user identifier.
-        custom_name: Name remembered or assigned by the bot.
+        user_name: Name remembered or assigned by the bot.
         relationship_score: Current relationship score (0-100).
         memories: Long-term memories associated with this participant. None if none exist.
     """
     user_id: int
-    custom_name: str | None = None
+    user_name: str | None = None
     relationship_score: int
     memories: list[str] | None = None
 
@@ -348,8 +348,7 @@ class PersonalityManifest(BaseModel):
     request_behavior: str = (
         "LLMRequest fields interpretation: timestamp — exact time of the current pulse; use it to understand time of day (morning/day/evening/night), "
         "inactivity duration, and appropriate mood. label — time-of-day hint; align tone accordingly (calm at night, more active during day). "
-        "participants_info — known participants by user_id; CRITICAL: if a user_id appears in messages but not here, this is a new participant; "
-        "you must acknowledge them, address them using user_name, and include them in new_participants. messages — list of recent messages grouped by user (user_id, user_name, texts); "
+        "participants_info — known participants by user_id; messages — list of recent messages grouped by user (user_id, user_name, texts); "
         "represents all new activity since last pulse; empty list means no activity; if messages exist, you must process them, do not ignore meaningful input, use user_name naturally. "
         "is_first_of_slot — first pulse; you just appeared; check participants_info: empty means you know nobody, otherwise you have prior relationships; "
         "adapt tone (unfamiliar → cautious, familiar → natural continuation). is_last_of_slot — final pulse; you are about to go offline; "
@@ -360,9 +359,9 @@ class PersonalityManifest(BaseModel):
         "LLMResponse fields interpretation: text_reply — message to send to chat; "
         "None means stay silent this pulse. new_memories — dict[user_id, str] of long-term memories; max 10 per participant; "
         "ALWAYS in English; max 5 words; facts only (example: 'likes philosophy, reads'). respect_updates — dict[user_id, int] representing relationship score DELTA; "
-        "MUST be change, not absolute value; typical range -20 to +20 (e.g. +10 for insight, -15 for insult). new_participants — dict[user_id, str] for newly introduced users; "
-        "include only if introduction occurred; value must contain user_name. set_block — list[user_id] to permanently block; use ONLY on hard restriction violations, not by default. "
-        "STRICT OUTPUT CONTRACT: your response MUST strictly match this schema; DO NOT add any extra fields; DO NOT omit required structure; DO NOT return text outside JSON; "
+        "MUST be change, not absolute value; typical range -2 to +2 (e.g. +1 for insight, -1 for insult). "  
+        "set_block — list[user_id] to permanently block; use ONLY on hard restriction violations. "
+        "STRICT OUTPUT CONTRACT: your response MUST strictly match this schema; DO NOT add any extra fields; "
         "if a field is not used return null; any deviation from schema is invalid.")
 
     restrictions: list[str]
@@ -421,14 +420,10 @@ class LLMResponse(BaseModel):
         respect_updates: Updated relationship scores keyed by user_id.
             Return only scores that changed this pulse. Values must be 0-100.
             Score 0 triggers permanent ignore automatically.
-        new_participants: Info about newly introduced participants keyed by user_id.
-            Only return if introduction happened this pulse.
-            Each entry must contain: custom_name (str), gender (male/female/unknown).
         set_block: List of user_ids to permanently block.
             Use only when a hard restriction from persona was violated.
     """
     text_reply: str | None = None
     new_memories: dict[int, str] | None = None
     respect_updates: dict[int, int] | None = None
-    new_participants: dict[int, str] | None = None
     set_block: list[int] | None = None

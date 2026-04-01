@@ -265,16 +265,18 @@ class AsyncPostgreManager:
         else:
             return None
 
-    async def get_all_participants_with_memories(self, config_id: int) -> list[Participant]:
-        """Retrieves all active participants for a config, embedding their
+    async def get_participants_with_memories(self, config_id: int, users_ids: list) -> list[Participant]:
+        """Retrieves active participants for a config, embedding their
         latest memories directly into each participant's record."""
         participant_list = await self._execute(
-            SQLParams(query=queries.GET_PARTICIPANTS_WITH_MEMORIES, params=(config_id,), mode="fetch_all")
+            SQLParams(query=queries.GET_PARTICIPANTS_WITH_MEMORIES, params=(config_id, users_ids,), mode="fetch_all")
         )
         participants = []
         if participant_list:
             for participant in participant_list:
                 participants.append(Participant.model_validate(participant))
+        else:
+            logger.critical(f"No participants returned for config_ids={users_ids}")
         return participants
 
     async def update_relationship_score(self, participant: Participant, score_change: int) -> None:

@@ -47,7 +47,8 @@ WHERE config_id = $1 AND user_id = $2;
 GET_PARTICIPANTS_WITH_MEMORIES = """
 SELECT config_id, user_id, user_name, relationship_score, memories
 FROM participants
-WHERE config_id = $1 AND is_ignored = false;
+WHERE config_id = $1
+  AND user_id = ANY($2)
 """
 
 UPDATE_PARTICIPANT_MEMORY = """

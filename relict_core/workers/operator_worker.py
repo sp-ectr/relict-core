@@ -13,7 +13,7 @@ from relict_core.config.logging_config import log_error
 from relict_core.databases.redis_client import RedisClient
 from relict_core.databases.postgre_client import AsyncPostgreManager
 from relict_core.config.relict_settings import PostgreSettings, RedisSettings
-from relict_core.config.schemas import WorkerIdentity, StreamContext, RedisKey, RedisData
+from relict_core.config.schemas import Participant, WorkerIdentity, StreamContext, RedisKey, RedisData
 from relict_core.config.events import RawMessage, Message
 
 logger = logging.getLogger(__name__)
@@ -103,11 +103,18 @@ class OperatorWorker:
             return
 
         participant_key = RedisData.participant_config(bot_config.id, event.user_id)
-        participant = await self.redis.get_data(participant_key)
-        if not participant:
-            participant = await self.db.get_participant(bot_config.id, event.user_id)
-            if participant:
-                await self.redis.set_data(participant_key, participant)
+        if not (participant := await self.redis.get_data(participant_key)):
+            if not (participant := await self.db.get_participant(bot_config.id, event.user_id)):
+                participant_id = await self.db.insert_participant(
+                    Participant(
+                        config_id=bot_config.id,
+                        user_id=event.user_id,
+                        user_name=event.user_name
+                    )
+                )
+                logger.debug(f"SUCCESS insert Participant user_id={participant_id} intro db.")
+                participant = await self.db.get_participant(bot_config.id, event.user_id)
+            await self.redis.set_data(participant_key, participant)
 
         if participant and participant.is_ignored:
             logger.debug(f"Ignored user {event.user_id} in chat {bot_config.id}")
@@ -129,14 +136,15 @@ class OperatorWorker:
             logger.debug(f"Produced message {event_id} to {produce_stream.stream} (trace: {event.trace_id})")
         except Exception as e:
             logger.error(
-                f"Failed to produce message to {produce_stream.stream} | trace={event.trace_id}: {e}",
+            f"Failed to produce message to {produce_stream.stream} | trace={event.trace_id}: {e}",
                 exc_info=True
             )
 
-    def stop(self):
-        """Gracefully stop the worker loop."""
-        if self.is_running:
-            logger.info(f"Stopping {self.worker_opts.consumer_name}...")
-            self.is_running = False
-        else:
-            logger.debug(f"{self.worker_opts.consumer_name} already stopped or not started")
+
+def stop(self):
+    """Gracefully stop the worker loop."""
+    if self.is_running:
+        logger.info(f"Stopping {self.worker_opts.consumer_name}...")
+        self.is_running = False
+    else:
+        logger.debug(f"{self.worker_opts.consumer_name} already stopped or not started")
