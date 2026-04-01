@@ -208,7 +208,7 @@ class BrainWorker:
             RedisKey.silence_lock(event.config_id),
             RedisKey.silence_counter(event.config_id),
             RedisKey.messages_stream(event.config_id),
-            RedisData.bot_config(event.config_id)
+            RedisData.bot_config(event.chat_id)
         ]
 
         await self.redis.delete_many(keys_to_delete)

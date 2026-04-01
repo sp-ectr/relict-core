@@ -76,6 +76,7 @@ class EventClean(BaseEvent):
     Initiates the teardown of all scheduled jobs and associated data.
     """
     config_id: int
+    chat_id: int
 
 
 # --- Scheduler Command Events ---
