@@ -52,31 +52,54 @@ class PulsePlanner:
         return timedelta(minutes=random.randint(min_min, max_min))
 
     def _plan_session_slots(self) -> list[SessionSlot]:
-        """ТЕСТОВЫЙ РЕЖИМ: только 1 слот, чтобы быстро проверить все пульсы до конца."""
+        """
+        Generate random session slots distributed across the active day window.
+        Respects min/max session count, duration, and gap constraints.
+        """
         effective_start = max(self.now, self.day_start)
         if effective_start >= self.day_end:
             return []
 
-        # === ТЕСТ: первый (и единственный) слот начинается ОЧЕНЬ СКОРО ===
-        test_delay_sec = random.randint(60, 120)  # 1–2 минуты от сейчас
-        effective_start += timedelta(seconds=test_delay_sec)
-
+        effective_start += self._random_delay_min(0, 300)
         if effective_start >= self.day_end:
             return []
 
-        # Делаем слот максимально длинным, чтобы все пульсы успели отработать
-        duration_min = self.opts.max_session_duration_min
+        available_minutes = (self.day_end - effective_start).total_seconds() / 60
 
-        slot_start = effective_start
-        slot_end = min(slot_start + timedelta(minutes=duration_min), self.day_end)
+        min_gap_min = self.opts.min_gap_between_sessions_min
+        max_gap_min = self.opts.max_gap_between_sessions_min
+        avg_gap_min = (min_gap_min + max_gap_min) / 2
+        avg_session_min = (self.opts.min_session_duration_min + self.opts.max_session_duration_min) / 2
 
-        if slot_start >= slot_end:
-            return []
+        max_feasible = max(1, int(available_minutes / (avg_session_min + avg_gap_min)))
+        max_sessions = min(self.opts.max_sessions_per_day, max_feasible)
+        min_sessions = min(self.opts.min_sessions_per_day, max_sessions)
+        num_sessions = random.randint(min_sessions, max_sessions)
 
-        logger.info(f"ТЕСТОВЫЙ РЕЖИМ: создан 1 слот на {duration_min} минут "
-                    f"(с {slot_start.strftime('%H:%M')} до {slot_end.strftime('%H:%M')})")
+        slots = []
+        cursor = effective_start
 
-        return [SessionSlot(start=slot_start, end=slot_end)]
+        for i in range(num_sessions):
+            if i > 0:
+                cursor += self._random_delay_min(min_gap_min, max_gap_min)
+
+            remaining: int = int((self.day_end - cursor).total_seconds() / 60)
+            if remaining < self.opts.min_session_duration_min:
+                break
+
+            duration_min = random.randint(
+                self.opts.min_session_duration_min,
+                min(self.opts.max_session_duration_min, int(remaining))
+            )
+
+            slot_start = cursor
+            slot_end = min(slot_start + timedelta(minutes=duration_min), self.day_end)
+
+            if slot_start < slot_end:
+                slots.append(SessionSlot(start=slot_start, end=slot_end))
+                cursor = slot_end
+
+        return slots
 
     def _plan_pulses_within_slot(self, slot: SessionSlot) -> list[Pulse]:
         """
