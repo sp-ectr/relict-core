@@ -1,46 +1,40 @@
 # Relict Core
 
-Async Python framework for building stateful LLM agents with configurable behavior and personality.
+Асинхронный Python-фреймворк для создания стейтфул LLM-агентов с настраиваемым поведением и личностью.
 
-`relict-core` is a micro-framework for running stateful LLM agents. It provides a runtime for long-running entities that can process messages and execute scheduled actions using an internal cycle.
+`relict-core` — микрофреймворк для запуска стейтфул LLM-агентов. Предоставляет runtime для долгоживущих сущностей, которые обрабатывают сообщения и выполняют запланированные действия через внутренний цикл.
 
-## Architecture
+## Архитектура
 
-Relict is based on a simple event-driven model where behavior is defined by configuration and internal state.
+Relict построен на event-driven модели, где поведение определяется конфигурацией и внутренним состоянием:
 
-### 1. Agency over reactivity
-The system runs on an internal cycle (pulse) and can execute actions without external input.
+- **Агентность вместо реактивности** — система работает на внутреннем цикле (pulse) и может выполнять действия без внешнего ввода.
+- **Поведение через конфигурацию** — поведение агента задаётся файлом конфигурации/схемой (`PersonalityManifest`); внутреннее состояние (например, relationship score) влияет на решения.
+- **Разделение engine/config** — ядро runtime универсально, всё поведение определяется извне через конфигурацию.
 
-### 2. Behavior via configuration
-Agent behavior is defined by a configuration file or schema (`PersonalityManifest`).
-Internal state (e.g. relationship score) influences decisions.
+### Ключевые возможности
 
-### 3. Engine/config separation
-The core runtime is generic. All behavior is defined externally via configuration.
+- **Pulse-цикл** — агенты могут действовать по собственному расписанию
+- **Поведение через конфиг** — личность и правила задаются конфигурацией
+- **Долговременная память** — состояние хранится в PostgreSQL
+- **Event-driven воркеры** — модель обработки на базе Redis Streams
+- **Подключаемые интеграции** — dependency injection для LLM и хранилищ
 
-## Key Features
+### Компоненты
 
-- **Scheduled execution (Pulse cycle):** agents can act on their own schedule
-- **Config-driven behavior:** personality and rules defined via configuration
-- **Long-term memory:** state stored in PostgreSQL
-- **Event-driven workers:** Redis Streams-based processing model
-- **Pluggable integrations:** dependency injection for LLMs and storage
+- Воркеры — stateless обработчики событий
+- Redis Streams — транспорт сообщений
+- PostgreSQL — персистентность
+- Драйверы — внешние интеграции
 
-## Architecture
+## Принципы
 
-- Workers: stateless event processors
-- Redis Streams: message transport
-- PostgreSQL: persistence
-- Drivers: external integrations
+- Разделение ответственности между воркерами, драйверами и storage
+- Асинхронная event-driven коммуникация через Redis Streams
+- Изоляция отказов на уровне процесса воркера
+- Явный dependency injection
 
-## Principles
-
-- Separation of concerns between workers, drivers, and storage
-- Async event-driven communication via Redis Streams
-- Fault isolation per worker process
-- Explicit dependency injection
-
-## Tech Stack
+## Стек
 
 - Python 3.12+
 - Pydantic v2
